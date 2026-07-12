@@ -8,6 +8,7 @@ import Chair from '../items/Chair'
 import Computer from '../items/Computer'
 import Whiteboard from '../items/Whiteboard'
 import VendingMachine from '../items/VendingMachine'
+import Door, { createDoorTextures } from '../items/Door'
 import '../characters/MyPlayer'
 import '../characters/OtherPlayer'
 import MyPlayer from '../characters/MyPlayer'
@@ -20,7 +21,11 @@ import { ItemType } from '../../../types/Items'
 
 import store from '../stores'
 import { setFocused, setShowChat } from '../stores/ChatStore'
+import { setCurrentMediaZone } from '../stores/MediaStore'
 import { NavKeys, Keyboard } from '../../../types/KeyboardState'
+import { phaserEvents, Event } from '../events/EventCenter'
+import { mediaZoneConfigs, MediaZoneConfig } from '../config/mediaZones'
+import { doorConfigs, DOOR_OPEN_DISTANCE, DOOR_CLOSE_DISTANCE, DOOR_ZONE_MAP } from '../config/doors'
 
 export default class Game extends Phaser.Scene {
   network!: Network
@@ -34,6 +39,11 @@ export default class Game extends Phaser.Scene {
   private otherPlayerMap = new Map<string, OtherPlayer>()
   computerMap = new Map<string, Computer>()
   private whiteboardMap = new Map<string, Whiteboard>()
+  private doors: Door[] = []
+  private currentMediaZoneId: string | null = null
+  private lastMediaDistanceEmit = 0
+  private mediaZoneLabels = new Map<string, Phaser.GameObjects.Text>()
+  private unsubscribeLockWatcher?: () => void
 
   constructor() {
     super('game')
@@ -67,6 +77,9 @@ export default class Game extends Phaser.Scene {
   }
 
   create(data: { network: Network }) {
+    this.events.once('shutdown', () => {
+      this.unsubscribeLockWatcher?.()
+    })
     if (!data.network) {
       throw new Error('server instance missing')
     } else {
@@ -136,6 +149,12 @@ export default class Game extends Phaser.Scene {
     this.addGroupFromTiled('GenericObjectsOnCollide', 'generic', 'Generic', true)
     this.addGroupFromTiled('Basement', 'basement', 'Basement', true)
 
+    // auto sliding doors at every room doorway
+    this.addDoors()
+
+    // media zone floor labels (subtle, in-world hint of where shared media plays)
+    this.addMediaZoneLabels()
+
     this.otherPlayers = this.physics.add.group({ classType: OtherPlayer })
 
     this.cameras.main.zoom = 1.5
@@ -169,6 +188,122 @@ export default class Game extends Phaser.Scene {
     this.network.onItemUserAdded(this.handleItemUserAdded, this)
     this.network.onItemUserRemoved(this.handleItemUserRemoved, this)
     this.network.onChatMessageAdded(this.handleChatMessageAdded, this)
+  }
+
+  private addDoors() {
+    createDoorTextures(this)
+    doorConfigs.forEach((config) => {
+      const centerX = config.x + config.width * 0.5
+      const centerY = config.y + config.height * 0.5
+      const texture = config.orientation === 'h' ? 'door_h' : 'door_v'
+      const door = new Door(this, centerX, centerY, texture, config.id, config.orientation)
+      this.add.existing(door)
+      this.physics.add.existing(door, true) // static body
+      door.setDepth(centerY + config.height * 0.5)
+      this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], door)
+      this.doors.push(door)
+    })
+  }
+
+  private addMediaZoneLabels() {
+    mediaZoneConfigs.forEach((zone) => {
+      const centerX = zone.x + zone.width * 0.5
+      const locked = !!store.getState().media.zones[zone.id]?.locked
+      const label = zone.lockable ? `${locked ? '🔒' : '🔓'} ♪ ${zone.label}` : `♪ ${zone.label}`
+      const text = this.add
+        .text(centerX, zone.y + 6, label, {
+          fontFamily: 'Arial',
+          fontSize: '11px',
+          color: '#1ea2df',
+        })
+        .setOrigin(0.5, 0)
+        .setAlpha(0.75)
+        .setDepth(zone.y)
+      this.mediaZoneLabels.set(zone.id, text)
+    })
+
+    // Keep lockable zone labels in sync with lock state (🔒/🔓 prefix) without
+    // re-creating the text objects — only lockable zones react here, since
+    // lounge/hall never carry a meaningful `locked` flag.
+    const prevLocked = new Map<string, boolean>(
+      mediaZoneConfigs
+        .filter((zone) => zone.lockable)
+        .map((zone) => [zone.id, !!store.getState().media.zones[zone.id]?.locked])
+    )
+    this.unsubscribeLockWatcher = store.subscribe(() => {
+      const zones = store.getState().media.zones
+      mediaZoneConfigs.forEach((zone) => {
+        if (!zone.lockable) return
+        const locked = !!zones[zone.id]?.locked
+        if (prevLocked.get(zone.id) === locked) return
+        prevLocked.set(zone.id, locked)
+        const text = this.mediaZoneLabels.get(zone.id)
+        if (!text) return
+        text.setText(`${locked ? '🔒' : '🔓'} ♪ ${zone.label}`)
+      })
+    })
+  }
+
+  private updateDoors() {
+    if (!this.myPlayer) return
+    const zones = store.getState().media.zones
+    this.doors.forEach((door) => {
+      const zoneId = DOOR_ZONE_MAP[door.doorId]
+      const locked = zoneId ? !!zones[zoneId]?.locked : false
+      door.setLockedState(locked)
+
+      if (locked) {
+        // Keep the collider solid and the panel shut regardless of distance —
+        // a locked door never auto-opens by proximity.
+        if (door.opened) door.setOpenState(false)
+        return
+      }
+
+      const distance = Phaser.Math.Distance.Between(
+        this.myPlayer.x,
+        this.myPlayer.y,
+        door.x,
+        door.y
+      )
+      if (!door.opened && distance < DOOR_OPEN_DISTANCE) {
+        door.setOpenState(true)
+      } else if (door.opened && distance > DOOR_CLOSE_DISTANCE) {
+        door.setOpenState(false)
+      }
+    })
+  }
+
+  private getMediaZoneAt(x: number, y: number): MediaZoneConfig | undefined {
+    return mediaZoneConfigs.find(
+      (zone) => x >= zone.x && x <= zone.x + zone.width && y >= zone.y && y <= zone.y + zone.height
+    )
+  }
+
+  private updateMediaZone(time: number) {
+    if (!this.myPlayer) return
+    const zone = this.getMediaZoneAt(this.myPlayer.x, this.myPlayer.y)
+    const zoneId = zone?.id ?? null
+
+    if (zoneId !== this.currentMediaZoneId) {
+      this.currentMediaZoneId = zoneId
+      store.dispatch(setCurrentMediaZone(zoneId))
+    }
+
+    // emit proximity ratio (1 = zone center, 0 = zone edge) ~5x per second
+    if (zone && time - this.lastMediaDistanceEmit > 200) {
+      this.lastMediaDistanceEmit = time
+      const centerX = zone.x + zone.width * 0.5
+      const centerY = zone.y + zone.height * 0.5
+      const maxRadius = Math.sqrt(zone.width * zone.width + zone.height * zone.height) * 0.5
+      const distance = Phaser.Math.Distance.Between(
+        this.myPlayer.x,
+        this.myPlayer.y,
+        centerX,
+        centerY
+      )
+      const ratio = 1 - Math.min(distance / maxRadius, 1)
+      phaserEvents.emit(Event.MEDIA_DISTANCE, ratio)
+    }
   }
 
   private handleItemSelectorOverlap(playerSelector, selectionItem) {
@@ -285,6 +420,8 @@ export default class Game extends Phaser.Scene {
     if (this.myPlayer && this.network) {
       this.playerSelector.update(this.myPlayer, this.cursors)
       this.myPlayer.update(this.playerSelector, this.cursors, this.keyE, this.keyR, this.network)
+      this.updateDoors()
+      this.updateMediaZone(t)
     }
   }
 }

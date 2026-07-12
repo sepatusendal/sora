@@ -1,5 +1,11 @@
 import { Client, Room } from 'colyseus.js'
-import { IComputer, IOfficeState, IPlayer, IWhiteboard } from '../../../types/IOfficeState'
+import {
+  IComputer,
+  IMediaZone,
+  IOfficeState,
+  IPlayer,
+  IWhiteboard,
+} from '../../../types/IOfficeState'
 import { Message } from '../../../types/Messages'
 import { IRoomData, RoomType } from '../../../types/Rooms'
 import { ItemType } from '../../../types/Items'
@@ -20,6 +26,7 @@ import {
   pushPlayerLeftMessage,
 } from '../stores/ChatStore'
 import { setWhiteboardUrls } from '../stores/WhiteboardStore'
+import { updateMediaZone } from '../stores/MediaStore'
 
 export default class Network {
   private client: Client
@@ -155,6 +162,33 @@ export default class Network {
       }
     }
 
+    // media zones: mirror the server playback state into Redux
+    if (this.room.state.mediaZones) {
+      this.room.state.mediaZones.onAdd = (zone: IMediaZone, key: string) => {
+        const syncZoneToStore = () => {
+          store.dispatch(
+            updateMediaZone({
+              id: key,
+              label: zone.label,
+              mediaType: zone.mediaType,
+              mediaId: zone.mediaId,
+              isPlaying: zone.isPlaying,
+              playbackTime: zone.playbackTime,
+              updatedAt: zone.updatedAt,
+              receivedAt: Date.now(),
+              ownerName: zone.ownerName,
+              locked: zone.locked,
+              lockedBy: zone.lockedBy,
+              lockedBySessionId: zone.lockedBySessionId,
+              lockedAt: zone.lockedAt,
+            })
+          )
+        }
+        syncZoneToStore()
+        zone.onChange = () => syncZoneToStore()
+      }
+    }
+
     // new instance added to the chatMessages ArraySchema
     this.room.state.chatMessages.onAdd = (item, index) => {
       store.dispatch(pushChatMessage(item))
@@ -281,5 +315,37 @@ export default class Network {
 
   addChatMessage(content: string) {
     this.room?.send(Message.ADD_CHAT_MESSAGE, { content: content })
+  }
+
+  // ----- media zone controls (shared YouTube/Spotify playback) -----
+
+  setZoneMedia(zoneId: string, mediaType: 'youtube' | 'spotify', mediaId: string) {
+    this.room?.send(Message.MEDIA_SET, { zoneId, mediaType, mediaId })
+  }
+
+  playZoneMedia(zoneId: string, time?: number) {
+    this.room?.send(Message.MEDIA_PLAY, { zoneId, time })
+  }
+
+  pauseZoneMedia(zoneId: string, time?: number) {
+    this.room?.send(Message.MEDIA_PAUSE, { zoneId, time })
+  }
+
+  seekZoneMedia(zoneId: string, time: number) {
+    this.room?.send(Message.MEDIA_SEEK, { zoneId, time })
+  }
+
+  stopZoneMedia(zoneId: string) {
+    this.room?.send(Message.MEDIA_STOP, { zoneId })
+  }
+
+  // ----- room lock controls (Meeting Room / CEO Room) -----
+
+  lockZone(zoneId: string) {
+    this.room?.send(Message.LOCK_ZONE, { zoneId })
+  }
+
+  unlockZone(zoneId: string) {
+    this.room?.send(Message.UNLOCK_ZONE, { zoneId })
   }
 }

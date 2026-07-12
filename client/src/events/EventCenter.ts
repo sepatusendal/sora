@@ -14,4 +14,7 @@ export enum Event {
   ITEM_USER_ADDED = 'item-user-added',
   ITEM_USER_REMOVED = 'item-user-removed',
   UPDATE_DIALOG_BUBBLE = 'update-dialog-bubble',
+  // emitted from the Game scene while the player is inside a media zone;
+  // payload is a 0..1 ratio (1 = at zone center) used for proximity volume
+  MEDIA_DISTANCE = 'media-distance',
 }

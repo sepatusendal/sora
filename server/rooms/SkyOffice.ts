@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt'
 import { Room, Client, ServerError } from 'colyseus'
 import { Dispatcher } from '@colyseus/command'
-import { Player, OfficeState, Computer, Whiteboard } from './schema/OfficeState'
+import { Player, OfficeState, Computer, Whiteboard, MediaZone } from './schema/OfficeState'
 import { Message } from '../../types/Messages'
 import { IRoomData } from '../../types/Rooms'
 import { whiteboardRoomIds } from './schema/OfficeState'
@@ -16,6 +16,32 @@ import {
   WhiteboardRemoveUserCommand,
 } from './commands/WhiteboardUpdateArrayCommand'
 import ChatMessageUpdateCommand from './commands/ChatMessageUpdateCommand'
+
+// media zones available in every office room
+// ids must match client/src/config/mediaZones.ts
+const MEDIA_ZONES: { id: string; label: string }[] = [
+  { id: 'lounge', label: 'Lounge' },
+  { id: 'studio', label: 'Meeting Room' },
+  { id: 'hall', label: 'Grand Hall' },
+  { id: 'ceo', label: 'CEO Room' },
+]
+
+// pixel rects (32px tiles) mirroring client/src/config/mediaZones.ts —
+// used server-side so lock/unlock can be verified against the player's
+// actual position instead of trusting the client.
+const ZONE_BOUNDS: { [id: string]: { x: number; y: number; width: number; height: number } } = {
+  lounge: { x: 192, y: 192, width: 416, height: 160 },
+  studio: { x: 192, y: 544, width: 416, height: 224 },
+  hall: { x: 800, y: 320, width: 448, height: 608 },
+  ceo: { x: 640, y: 32, width: 416, height: 256 },
+}
+
+// only these zones can be locked — meeting room & CEO room are private
+// spaces; the lounge and grand hall stay open to everyone.
+const LOCKABLE_ZONE_IDS = new Set(['studio', 'ceo'])
+
+// how often (ms) the server sweeps locked zones for an auto-unlock safety net
+const LOCK_SWEEP_INTERVAL = 5000
 
 export class SkyOffice extends Room<OfficeState> {
   private dispatcher = new Dispatcher(this)
@@ -48,6 +74,75 @@ export class SkyOffice extends Room<OfficeState> {
     for (let i = 0; i < 3; i++) {
       this.state.whiteboards.set(String(i), new Whiteboard())
     }
+
+    // add shared media zones (synced YouTube/Spotify playback per zone)
+    MEDIA_ZONES.forEach(({ id, label }) => {
+      const zone = new MediaZone()
+      zone.label = label
+      this.state.mediaZones.set(id, zone)
+    })
+
+    /**
+     * Lock room (advanced):
+     * - Only a player physically standing inside a lockable zone may lock it
+     *   (verified server-side against ZONE_BOUNDS, never trusting the client).
+     * - Once locked, entry is blocked for everyone else — the door stays shut
+     *   client-side (see Game.ts) because the lock state is part of the
+     *   synced room state.
+     * - Unlocking is allowed for the player who locked it OR anyone currently
+     *   standing inside the zone (so a meeting can "self-unlock" even if the
+     *   original locker already left).
+     * - Safety net: every LOCK_SWEEP_INTERVAL ms, any locked zone with nobody
+     *   left inside it is automatically unlocked so a room can never stay
+     *   locked forever if everyone disconnects/walks away.
+     */
+    this.onMessage(Message.LOCK_ZONE, (client, message: { zoneId: string }) => {
+      const zoneId = message?.zoneId
+      const zone = this.state.mediaZones.get(zoneId)
+      if (!zone || !LOCKABLE_ZONE_IDS.has(zoneId) || zone.locked) return
+
+      const player = this.state.players.get(client.sessionId)
+      if (!player || !this.isPlayerInZone(player, zoneId)) return
+
+      zone.locked = true
+      zone.lockedBy = player.name || 'Someone'
+      zone.lockedBySessionId = client.sessionId
+      zone.lockedAt = Date.now()
+    })
+
+    this.onMessage(Message.UNLOCK_ZONE, (client, message: { zoneId: string }) => {
+      const zoneId = message?.zoneId
+      const zone = this.state.mediaZones.get(zoneId)
+      if (!zone || !zone.locked) return
+
+      const player = this.state.players.get(client.sessionId)
+      if (!player) return
+
+      const isOriginalLocker = client.sessionId === zone.lockedBySessionId
+      const isCurrentlyInside = this.isPlayerInZone(player, zoneId)
+      if (!isOriginalLocker && !isCurrentlyInside) return
+
+      zone.locked = false
+      zone.lockedBy = ''
+      zone.lockedBySessionId = ''
+      zone.lockedAt = 0
+    })
+
+    // auto-unlock safety net
+    this.clock.setInterval(() => {
+      this.state.mediaZones.forEach((zone, zoneId) => {
+        if (!zone.locked || !LOCKABLE_ZONE_IDS.has(zoneId)) return
+        const anyoneInside = Array.from(this.state.players.values()).some((player) =>
+          this.isPlayerInZone(player, zoneId)
+        )
+        if (!anyoneInside) {
+          zone.locked = false
+          zone.lockedBy = ''
+          zone.lockedBySessionId = ''
+          zone.lockedAt = 0
+        }
+      })
+    }, LOCK_SWEEP_INTERVAL)
 
     // when a player connect to a computer, add to the computer connectedUser array
     this.onMessage(Message.CONNECT_TO_COMPUTER, (client, message: { computerId: string }) => {
@@ -95,6 +190,72 @@ export class SkyOffice extends Room<OfficeState> {
         })
       }
     )
+
+    /**
+     * Media zone messages (shared YouTube/Spotify playback)
+     * The server is the single source of truth for playback state:
+     * - mediaId + mediaType: what is playing
+     * - playbackTime: playhead position (seconds) at the moment of updatedAt
+     * - updatedAt: server timestamp of the last state change
+     * Clients derive the live position as playbackTime + (now - receivedAt).
+     */
+    this.onMessage(
+      Message.MEDIA_SET,
+      (client, message: { zoneId: string; mediaType: string; mediaId: string }) => {
+        const zone = this.state.mediaZones.get(message.zoneId)
+        if (!zone) return
+        if (message.mediaType !== 'youtube' && message.mediaType !== 'spotify') return
+        const player = this.state.players.get(client.sessionId)
+        zone.mediaType = message.mediaType
+        zone.mediaId = message.mediaId
+        zone.isPlaying = true
+        zone.playbackTime = 0
+        zone.updatedAt = Date.now()
+        zone.ownerName = player?.name || ''
+      }
+    )
+
+    this.onMessage(Message.MEDIA_PLAY, (client, message: { zoneId: string; time?: number }) => {
+      const zone = this.state.mediaZones.get(message.zoneId)
+      if (!zone || !zone.mediaId) return
+      if (typeof message.time === 'number' && message.time >= 0) {
+        zone.playbackTime = message.time
+      }
+      zone.isPlaying = true
+      zone.updatedAt = Date.now()
+    })
+
+    this.onMessage(Message.MEDIA_PAUSE, (client, message: { zoneId: string; time?: number }) => {
+      const zone = this.state.mediaZones.get(message.zoneId)
+      if (!zone || !zone.mediaId) return
+      if (typeof message.time === 'number' && message.time >= 0) {
+        // trust the pausing client's actual playhead for accuracy
+        zone.playbackTime = message.time
+      } else if (zone.isPlaying) {
+        zone.playbackTime += (Date.now() - zone.updatedAt) / 1000
+      }
+      zone.isPlaying = false
+      zone.updatedAt = Date.now()
+    })
+
+    this.onMessage(Message.MEDIA_SEEK, (client, message: { zoneId: string; time: number }) => {
+      const zone = this.state.mediaZones.get(message.zoneId)
+      if (!zone || !zone.mediaId) return
+      if (typeof message.time !== 'number' || message.time < 0) return
+      zone.playbackTime = message.time
+      zone.updatedAt = Date.now()
+    })
+
+    this.onMessage(Message.MEDIA_STOP, (client, message: { zoneId: string }) => {
+      const zone = this.state.mediaZones.get(message.zoneId)
+      if (!zone) return
+      zone.mediaType = ''
+      zone.mediaId = ''
+      zone.isPlaying = false
+      zone.playbackTime = 0
+      zone.updatedAt = Date.now()
+      zone.ownerName = ''
+    })
 
     // when receiving updatePlayer message, call the PlayerUpdateCommand
     this.onMessage(
@@ -155,6 +316,17 @@ export class SkyOffice extends Room<OfficeState> {
     })
   }
 
+  private isPlayerInZone(player: Player, zoneId: string): boolean {
+    const bounds = ZONE_BOUNDS[zoneId]
+    if (!bounds) return false
+    return (
+      player.x >= bounds.x &&
+      player.x <= bounds.x + bounds.width &&
+      player.y >= bounds.y &&
+      player.y <= bounds.y + bounds.height
+    )
+  }
+
   async onAuth(client: Client, options: { password: string | null }) {
     if (this.password) {
       const validPassword = await bcrypt.compare(options.password, this.password)
@@ -178,6 +350,21 @@ export class SkyOffice extends Room<OfficeState> {
     if (this.state.players.has(client.sessionId)) {
       this.state.players.delete(client.sessionId)
     }
+    // if the player who leaves was holding a lock and nobody else is left
+    // inside that room, release it immediately instead of waiting for the
+    // periodic sweep
+    this.state.mediaZones.forEach((zone, zoneId) => {
+      if (!zone.locked || zone.lockedBySessionId !== client.sessionId) return
+      const anyoneElseInside = Array.from(this.state.players.values()).some((player) =>
+        this.isPlayerInZone(player, zoneId)
+      )
+      if (!anyoneElseInside) {
+        zone.locked = false
+        zone.lockedBy = ''
+        zone.lockedBySessionId = ''
+        zone.lockedAt = 0
+      }
+    })
     this.state.computers.forEach((computer) => {
       if (computer.connectedUser.has(client.sessionId)) {
         computer.connectedUser.delete(client.sessionId)

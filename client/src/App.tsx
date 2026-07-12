@@ -11,6 +11,8 @@ import VideoConnectionDialog from './components/VideoConnectionDialog'
 import Chat from './components/Chat'
 import HelperButtonGroup from './components/HelperButtonGroup'
 import MobileVirtualJoystick from './components/MobileVirtualJoystick'
+import Sidebar from './components/Sidebar'
+import MediaPlayerPanel from './components/MediaPlayerPanel'
 
 const Backdrop = styled.div`
   position: absolute;
@@ -55,7 +57,11 @@ function App() {
   return (
     <Backdrop>
       {ui}
-      {/* Render HelperButtonGroup if no dialogs are opened. */}
+      {/* Sidebar — always mounted when logged in so the toggle button is always visible */}
+      {loggedIn && <Sidebar />}
+      {/* MediaPlayerPanel — only renders when player is inside a media zone */}
+      {loggedIn && <MediaPlayerPanel />}
+      {/* HelperButtonGroup — hide when a full-screen dialog is open */}
       {!computerDialogOpen && !whiteboardDialogOpen && <HelperButtonGroup />}
     </Backdrop>
   )

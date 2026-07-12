@@ -5,6 +5,7 @@ import {
   IComputer,
   IWhiteboard,
   IChatMessage,
+  IMediaZone,
 } from '../../../types/IOfficeState'
 
 export class Player extends Schema implements IPlayer {
@@ -31,6 +32,20 @@ export class ChatMessage extends Schema implements IChatMessage {
   @type('string') content = ''
 }
 
+export class MediaZone extends Schema implements IMediaZone {
+  @type('string') label = ''
+  @type('string') mediaType = ''
+  @type('string') mediaId = ''
+  @type('boolean') isPlaying = false
+  @type('number') playbackTime = 0
+  @type('number') updatedAt = 0
+  @type('string') ownerName = ''
+  @type('boolean') locked = false
+  @type('string') lockedBy = ''
+  @type('string') lockedBySessionId = ''
+  @type('number') lockedAt = 0
+}
+
 export class OfficeState extends Schema implements IOfficeState {
   @type({ map: Player })
   players = new MapSchema<Player>()
@@ -43,6 +58,9 @@ export class OfficeState extends Schema implements IOfficeState {
 
   @type([ChatMessage])
   chatMessages = new ArraySchema<ChatMessage>()
+
+  @type({ map: MediaZone })
+  mediaZones = new MapSchema<MediaZone>()
 }
 
 export const whiteboardRoomIds = new Set<string>()
