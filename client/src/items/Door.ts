@@ -83,28 +83,50 @@ export default class Door extends Phaser.Physics.Arcade.Sprite {
 
 /**
  * Generates the pixel-art door textures at runtime so no extra assets are needed.
- * door_h: 32x32 panel, door_v: 32x64 panel.
+ *
+ * door_h: 32x64 (2 tiles tall). The BOTTOM tile is the real wall-gap tile
+ * (flush with the wall on both sides, unchanged from the original 32x32);
+ * the extra tile is added purely on top of it, extending upward into the
+ * room, not centered/split across both sides — see config/doors.ts's
+ * y-position math for why that matters.
+ * door_v: 32x96 (3 tiles tall), matching the actual height of the vertical
+ * gap it covers (config/doors.ts's workspace-door etc.) — previously this
+ * was only 64px, so a third of the opening never actually got covered even
+ * when "closed".
+ * door_glass_v: same size as door_v, styled as a glass/transparent door
+ * (metal frame, translucent pane) for the Workspace entrance.
  */
 export function createDoorTextures(scene: Phaser.Scene) {
   if (!scene.textures.exists('door_h')) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false)
-    g.fillStyle(0x4a3018, 1).fillRect(0, 0, 32, 32) // frame
-    g.fillStyle(0x8a623a, 1).fillRect(2, 2, 28, 28) // panel
-    g.fillStyle(0x6b4a2b, 1).fillRect(2, 14, 28, 3) // middle groove
-    g.fillStyle(0xd9b26a, 1).fillRect(24, 13, 4, 5) // handle
-    g.lineStyle(1, 0x2e1d0e, 1).strokeRect(0.5, 0.5, 31, 31)
-    g.generateTexture('door_h', 32, 32)
+    g.fillStyle(0x4a3018, 1).fillRect(0, 0, 32, 64) // frame
+    g.fillStyle(0x8a623a, 1).fillRect(2, 2, 28, 60) // panel
+    g.fillStyle(0x6b4a2b, 1).fillRect(2, 46, 28, 3) // middle groove (near the bottom/true-gap half)
+    g.fillStyle(0xd9b26a, 1).fillRect(24, 45, 4, 5) // handle
+    g.lineStyle(1, 0x2e1d0e, 1).strokeRect(0.5, 0.5, 31, 63)
+    g.generateTexture('door_h', 32, 64)
     g.destroy()
   }
 
   if (!scene.textures.exists('door_v')) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false)
-    g.fillStyle(0x4a3018, 1).fillRect(0, 0, 32, 64) // frame
-    g.fillStyle(0x8a623a, 1).fillRect(2, 2, 28, 60) // panel
-    g.fillStyle(0x6b4a2b, 1).fillRect(14, 2, 3, 60) // middle groove
-    g.fillStyle(0xd9b26a, 1).fillRect(13, 28, 5, 8) // handle
-    g.lineStyle(1, 0x2e1d0e, 1).strokeRect(0.5, 0.5, 31, 63)
-    g.generateTexture('door_v', 32, 64)
+    g.fillStyle(0x4a3018, 1).fillRect(0, 0, 32, 96) // frame
+    g.fillStyle(0x8a623a, 1).fillRect(2, 2, 28, 92) // panel
+    g.fillStyle(0x6b4a2b, 1).fillRect(14, 2, 3, 92) // middle groove
+    g.fillStyle(0xd9b26a, 1).fillRect(13, 46, 5, 8) // handle
+    g.lineStyle(1, 0x2e1d0e, 1).strokeRect(0.5, 0.5, 31, 95)
+    g.generateTexture('door_v', 32, 96)
+    g.destroy()
+  }
+
+  if (!scene.textures.exists('door_glass_v')) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false)
+    g.fillStyle(0x5a6a75, 1).fillRect(0, 0, 32, 96) // metal frame
+    g.fillStyle(0xbfe6f2, 0.55).fillRect(2, 2, 28, 92) // glass pane
+    g.fillStyle(0xffffff, 0.3).fillRect(5, 4, 7, 88) // reflection streak
+    g.fillStyle(0x33454d, 1).fillRect(13, 46, 5, 8) // handle
+    g.lineStyle(1, 0x33454d, 1).strokeRect(0.5, 0.5, 31, 95)
+    g.generateTexture('door_glass_v', 32, 96)
     g.destroy()
   }
 }

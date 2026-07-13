@@ -150,8 +150,8 @@ function YouTubeSyncPlayer({
     loadYouTubeApi().then((YT) => {
       if (cancelled || !containerRef.current) return
       playerRef.current = new YT.Player(containerRef.current, {
-        width: '304',
-        height: '171',
+        width: '228',
+        height: '128',
         videoId: zoneRef.current.mediaId,
         playerVars: {
           autoplay: zoneRef.current.isPlaying ? 1 : 0,
@@ -170,7 +170,9 @@ function YouTubeSyncPlayer({
       cancelled = true
       try {
         playerRef.current?.destroy?.()
-      } catch {}
+      } catch {
+        /* best-effort cleanup — ignore if the player is already gone */
+      }
       playerRef.current = null
       readyRef.current = false
     }
@@ -194,7 +196,9 @@ function YouTubeSyncPlayer({
     const onDistance = (ratio: number) => {
       try {
         playerRef.current?.setVolume?.(Math.round(35 + 65 * ratio))
-      } catch {}
+      } catch {
+        /* player not ready yet — skip this volume update */
+      }
     }
     phaserEvents.on(Event.MEDIA_DISTANCE, onDistance)
     return () => {
@@ -209,7 +213,9 @@ function YouTubeSyncPlayer({
         try {
           const t = playerRef.current?.getCurrentTime?.()
           if (typeof t === 'number' && t >= 0) return t
-        } catch {}
+        } catch {
+          /* player not ready yet — fall back to the last known synced time */
+        }
         return getExpectedMediaTime(zoneRef.current)
       },
       forceSync: syncNow,
@@ -278,7 +284,7 @@ function SpotifySyncPlayer({
         {
           uri: zoneRef.current.mediaId,
           width: '100%',
-          height: 90,
+          height: 80,
         },
         (embedController: any) => {
           controller = embedController
@@ -300,7 +306,9 @@ function SpotifySyncPlayer({
       cancelled = true
       try {
         controller?.destroy?.()
-      } catch {}
+      } catch {
+        /* best-effort cleanup — ignore if the player is already gone */
+      }
       controllerRef.current = null
       readyRef.current = false
     }
@@ -482,10 +490,10 @@ const Backdrop = styled.div`
      button row (bottom: 16px, ~40px tall Fabs) instead of overlapping it. */
   bottom: 78px;
   right: 16px;
-  width: 336px;
+  width: 252px;
   max-height: calc(100vh - 100px);
   background: #222639ee;
-  border-radius: 16px;
+  border-radius: 12px;
   box-shadow: 0px 0px 5px #0000006f;
   color: #eee;
   overflow: hidden;
@@ -495,30 +503,32 @@ const Backdrop = styled.div`
 const Header = styled.div`
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 7px 10px;
   background: #1c1f2e;
 
   svg {
     color: #1ea2df;
+    font-size: 18px;
   }
 
   button {
     color: #eee;
+    padding: 4px;
   }
 `
 
 const HeaderTitle = styled.div`
   flex: 1;
   font-weight: bold;
-  font-size: 15px;
+  font-size: 13px;
 `
 
 const Content = styled.div`
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 `
 
 const VideoFrame = styled.div`

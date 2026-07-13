@@ -253,7 +253,7 @@ export default function Sidebar() {
             {activeMediaZones.length === 0 ? (
               <MutedText>
                 Belum ada media diputar. Masuk ke zona bertanda ♪ di map (Lounge, Meeting Room,
-                CEO Room, Grand Hall) lalu tempel link YouTube/Spotify.
+                CEO Room, Workspace) lalu tempel link YouTube/Spotify.
               </MutedText>
             ) : (
               activeMediaZones.map((zone) => (

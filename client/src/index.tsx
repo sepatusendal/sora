@@ -10,14 +10,23 @@ import muiTheme from './MuiTheme'
 import App from './App'
 import store from './stores'
 
+// react-redux 7's Provider type predates React 18's stricter JSX.ElementClass
+// (it's missing `refs`), so @types/react 18 rejects it as a JSX component
+// even though it works fine at runtime. Re-typed locally rather than
+// bumping react-redux, which would be a behavior change, not a type fix.
+const TypedProvider = Provider as unknown as React.ComponentType<{
+  store: typeof store
+  children?: React.ReactNode
+}>
+
 const container = document.getElementById('root')
 const root = createRoot(container!)
 root.render(
   <React.StrictMode>
-    <Provider store={store}>
+    <TypedProvider store={store}>
       <ThemeProvider theme={muiTheme}>
         <App />
       </ThemeProvider>
-    </Provider>
+    </TypedProvider>
   </React.StrictMode>
 )

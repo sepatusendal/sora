@@ -22,8 +22,18 @@ import ChatMessageUpdateCommand from './commands/ChatMessageUpdateCommand'
 const MEDIA_ZONES: { id: string; label: string }[] = [
   { id: 'lounge', label: 'Lounge' },
   { id: 'studio', label: 'Meeting Room' },
-  { id: 'hall', label: 'Grand Hall' },
+  { id: 'workspace', label: 'Workspace' },
   { id: 'ceo', label: 'CEO Room' },
+  // annex rooms — map-annex.json is a byte-for-byte duplicate of map.json
+  // (see client/src/scenes/Game.ts / config/mediaZones.ts), loaded into the
+  // same persistent client scene as the main map and reached via portal
+  // (client/src/config/portals.ts). World coords are pre-offset by
+  // +1280,+0 (ANNEX_WORLD_OFFSET) so they sit directly beside the main
+  // map's right edge without numerically colliding with the zones above.
+  { id: 'annexLounge', label: 'Annex Lounge' },
+  { id: 'annexStudio', label: 'Annex Meeting Room' },
+  { id: 'annexWorkspace', label: 'Annex Workspace' },
+  { id: 'annexCeo', label: 'Annex CEO Room' },
 ]
 
 // pixel rects (32px tiles) mirroring client/src/config/mediaZones.ts —
@@ -32,13 +42,17 @@ const MEDIA_ZONES: { id: string; label: string }[] = [
 const ZONE_BOUNDS: { [id: string]: { x: number; y: number; width: number; height: number } } = {
   lounge: { x: 192, y: 192, width: 416, height: 160 },
   studio: { x: 192, y: 544, width: 416, height: 224 },
-  hall: { x: 800, y: 320, width: 448, height: 608 },
+  workspace: { x: 800, y: 320, width: 448, height: 608 },
   ceo: { x: 640, y: 32, width: 416, height: 256 },
+  annexLounge: { x: 1472, y: 192, width: 416, height: 160 },
+  annexStudio: { x: 1472, y: 544, width: 416, height: 224 },
+  annexWorkspace: { x: 2080, y: 320, width: 448, height: 608 },
+  annexCeo: { x: 1920, y: 32, width: 416, height: 256 },
 }
 
 // only these zones can be locked — meeting room & CEO room are private
-// spaces; the lounge and grand hall stay open to everyone.
-const LOCKABLE_ZONE_IDS = new Set(['studio', 'ceo'])
+// spaces; the lounge and workspace stay open to everyone.
+const LOCKABLE_ZONE_IDS = new Set(['studio', 'ceo', 'annexStudio', 'annexCeo'])
 
 // how often (ms) the server sweeps locked zones for an auto-unlock safety net
 const LOCK_SWEEP_INTERVAL = 5000
@@ -65,15 +79,20 @@ export class SkyOffice extends Room<OfficeState> {
 
     this.setState(new OfficeState())
 
-    // HARD-CODED: Add 5 computers in a room
-    for (let i = 0; i < 5; i++) {
-      this.state.computers.set(String(i), new Computer())
-    }
-
-    // HARD-CODED: Add 3 whiteboards in a room
-    for (let i = 0; i < 3; i++) {
-      this.state.whiteboards.set(String(i), new Whiteboard())
-    }
+    // HARD-CODED: Add 5 computers + 3 whiteboards per map ('main', 'annex').
+    // The annex is a full duplicate of the main map's tilemap (see
+    // client/src/scenes/Game.ts), so ids are prefixed per-map — otherwise
+    // annex computer/whiteboard 0 would resolve to the exact same state as
+    // main's, incorrectly sharing screen-share/whiteboard-room state across
+    // two physically different desks.
+    ;['main', 'annex'].forEach((mapPrefix) => {
+      for (let i = 0; i < 5; i++) {
+        this.state.computers.set(`${mapPrefix}-${i}`, new Computer())
+      }
+      for (let i = 0; i < 3; i++) {
+        this.state.whiteboards.set(`${mapPrefix}-${i}`, new Whiteboard())
+      }
+    })
 
     // add shared media zones (synced YouTube/Spotify playback per zone)
     MEDIA_ZONES.forEach(({ id, label }) => {
@@ -337,7 +356,7 @@ export class SkyOffice extends Room<OfficeState> {
     return true
   }
 
-  onJoin(client: Client, options: any) {
+  onJoin(client: Client) {
     this.state.players.set(client.sessionId, new Player())
     client.send(Message.SEND_ROOM_DATA, {
       id: this.roomId,
@@ -346,7 +365,7 @@ export class SkyOffice extends Room<OfficeState> {
     })
   }
 
-  onLeave(client: Client, consented: boolean) {
+  onLeave(client: Client) {
     if (this.state.players.has(client.sessionId)) {
       this.state.players.delete(client.sessionId)
     }

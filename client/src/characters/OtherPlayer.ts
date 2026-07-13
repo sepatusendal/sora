@@ -4,6 +4,13 @@ import MyPlayer from './MyPlayer'
 import { sittingShiftData } from './Player'
 import WebRTC from '../web/WebRTC'
 import { Event, phaserEvents } from '../events/EventCenter'
+import store from '../stores'
+import { findZoneAt } from '../config/mediaZones'
+
+// spatial audio: call volume fades linearly from full at 0 distance to
+// silent at this radius (bigger than the connect/disconnect overlap box,
+// so it fades out before the call actually drops instead of cutting sharply)
+const MAX_HEARING_DISTANCE = 260
 
 export default class OtherPlayer extends Player {
   private targetPosition: [number, number]
@@ -12,6 +19,7 @@ export default class OtherPlayer extends Player {
   private connected = false
   private playContainerBody: Phaser.Physics.Arcade.Body
   private myPlayer?: MyPlayer
+  private webRTC?: WebRTC
 
   constructor(
     scene: Phaser.Scene,
@@ -31,6 +39,7 @@ export default class OtherPlayer extends Player {
 
   makeCall(myPlayer: MyPlayer, webRTC: WebRTC) {
     this.myPlayer = myPlayer
+    this.webRTC = webRTC
     const myPlayerId = myPlayer.playerId
     if (
       !this.connected &&
@@ -44,6 +53,35 @@ export default class OtherPlayer extends Player {
       this.connected = true
       this.connectionBufferTime = 0
     }
+  }
+
+  /**
+   * Spatial audio + locked-room privacy. The call itself connects/stays up
+   * based on a proximity BOX (6x/4x the sprite size, set where the body is
+   * created below) that doesn't know about walls, so two players separated
+   * by a locked door's wall can still be within that box — muting to 0
+   * here is what actually keeps a locked room's conversation private,
+   * not the physical door.
+   */
+  private updateCallVolume() {
+    if (!this.connected || !this.myPlayer || !this.webRTC) return
+
+    const myZone = findZoneAt(this.myPlayer.x, this.myPlayer.y)
+    const theirZone = findZoneAt(this.x, this.y)
+    const zones = store.getState().media.zones
+    const inDifferentRooms = myZone?.id !== theirZone?.id
+    const eitherRoomLocked =
+      (myZone?.lockable && zones[myZone.id]?.locked) ||
+      (theirZone?.lockable && zones[theirZone.id]?.locked)
+
+    if (inDifferentRooms && eitherRoomLocked) {
+      this.webRTC.setPeerVolume(this.playerId, 0)
+      return
+    }
+
+    const distance = Phaser.Math.Distance.Between(this.myPlayer.x, this.myPlayer.y, this.x, this.y)
+    const volume = 1 - Math.min(distance / MAX_HEARING_DISTANCE, 1)
+    this.webRTC.setPeerVolume(this.playerId, volume)
   }
 
   updateOtherPlayer(field: string, value: number | string | boolean) {
@@ -109,7 +147,7 @@ export default class OtherPlayer extends Player {
 
     this.lastUpdateTimestamp = t
     this.setDepth(this.y) // change player.depth based on player.y
-    const animParts = this.anims.currentAnim.key.split('_')
+    const animParts = this.anims.currentAnim!.key.split('_')
     const animState = animParts[1]
     if (animState === 'sit') {
       const animDir = animParts[2]
@@ -147,7 +185,7 @@ export default class OtherPlayer extends Player {
 
     // update character velocity
     this.setVelocity(vx, vy)
-    this.body.velocity.setLength(speed)
+    ;(this.body as Phaser.Physics.Arcade.Body).velocity.setLength(speed)
     // also update playerNameContainer velocity
     this.playContainerBody.setVelocity(vx, vy)
     this.playContainerBody.velocity.setLength(speed)
@@ -157,8 +195,8 @@ export default class OtherPlayer extends Player {
     this.connectionBufferTime += dt
     if (
       this.connected &&
-      !this.body.embedded &&
-      this.body.touching.none &&
+      !(this.body as Phaser.Physics.Arcade.Body).embedded &&
+      (this.body as Phaser.Physics.Arcade.Body).touching.none &&
       this.connectionBufferTime >= 750
     ) {
       if (this.x < 610 && this.y > 515 && this.myPlayer!.x < 610 && this.myPlayer!.y > 515) return
@@ -166,6 +204,8 @@ export default class OtherPlayer extends Player {
       this.connectionBufferTime = 0
       this.connected = false
     }
+
+    this.updateCallVolume()
   }
 }
 
@@ -203,7 +243,7 @@ Phaser.GameObjects.GameObjectFactory.register(
     this.scene.physics.world.enableBody(sprite, Phaser.Physics.Arcade.DYNAMIC_BODY)
 
     const collisionScale = [6, 4]
-    sprite.body
+    sprite.body!
       .setSize(sprite.width * collisionScale[0], sprite.height * collisionScale[1])
       .setOffset(
         sprite.width * (1 - collisionScale[0]) * 0.5,

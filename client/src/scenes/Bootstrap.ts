@@ -28,6 +28,7 @@ export default class Bootstrap extends Phaser.Scene {
     this.load.image('sun_moon', 'assets/background/sun_moon.png')
 
     this.load.tilemapTiledJSON('tilemap', 'assets/map/map.json')
+    this.load.tilemapTiledJSON('tilemap-annex', 'assets/map/map-annex.json')
     this.load.spritesheet('tiles_wall', 'assets/map/FloorAndGround.png', {
       frameWidth: 32,
       frameHeight: 32,
@@ -93,7 +94,9 @@ export default class Bootstrap extends Phaser.Scene {
 
   launchGame() {
     if (!this.preloadComplete) return
-    this.network.webRTC?.checkPreviousPermission()
+    // camera/mic only ever turn on from an explicit "Connect Webcam" click
+    // (LoginDialog / VideoConnectionDialog) — no silent auto-connect here,
+    // even if the browser remembers a previous grant for this origin.
     this.scene.launch('game', {
       network: this.network,
     })

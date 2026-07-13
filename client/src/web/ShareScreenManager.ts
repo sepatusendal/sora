@@ -4,9 +4,13 @@ import { setMyStream, addVideoStream, removeVideoStream } from '../stores/Comput
 import phaserGame from '../PhaserGame'
 import Game from '../scenes/Game'
 
+const CALL_RETRY_DELAY_MS = 1500
+const CALL_MAX_RETRIES = 3
+
 export default class ShareScreenManager {
   private myPeer: Peer
   myStream?: MediaStream
+  private callRetries = new Map<string, number>()
 
   constructor(private userId: string) {
     const sanatizedId = this.makeId(userId)
@@ -14,6 +18,15 @@ export default class ShareScreenManager {
     this.myPeer.on('error', (err) => {
       console.log('ShareScreenWebRTC err.type', err.type)
       console.error('ShareScreenWebRTC', err)
+
+      // The callee's PeerJS connection may not have finished registering with the
+      // signaling server yet when we tried to call them right after they joined -
+      // retry a few times before giving up.
+      if (err.type === 'peer-unavailable') {
+        const match = /peer (.+)$/.exec(err.message)
+        const calleeId = match?.[1]
+        if (calleeId) this.retryCall(calleeId)
+      }
     })
 
     this.myPeer.on('call', (call) => {
@@ -24,6 +37,20 @@ export default class ShareScreenManager {
       })
       // we handled on close on our own
     })
+  }
+
+  private retryCall(sanatizedId: string) {
+    const attempts = this.callRetries.get(sanatizedId) ?? 0
+    if (attempts >= CALL_MAX_RETRIES) {
+      this.callRetries.delete(sanatizedId)
+      return
+    }
+    this.callRetries.set(sanatizedId, attempts + 1)
+
+    setTimeout(() => {
+      if (!this.myStream) return
+      this.myPeer.call(sanatizedId, this.myStream)
+    }, CALL_RETRY_DELAY_MS)
   }
 
   onOpen() {
@@ -45,9 +72,15 @@ export default class ShareScreenManager {
   }
 
   startScreenShare() {
-    // @ts-ignore
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      window.alert(
+        'Screen sharing is not available. Make sure the site is loaded over HTTPS (or localhost).'
+      )
+      return
+    }
+
     navigator.mediaDevices
-      ?.getDisplayMedia({
+      .getDisplayMedia({
         video: true,
         audio: true,
       })
@@ -73,6 +106,10 @@ export default class ShareScreenManager {
           }
         }
       })
+      .catch((err) => {
+        console.error('getDisplayMedia failed', err)
+        window.alert('Could not start screen sharing: ' + err.message)
+      })
   }
 
   // TODO(daxchen): Fix this trash hack, if we call store.dispatch here when calling
@@ -93,6 +130,7 @@ export default class ShareScreenManager {
     if (!this.myStream || userId === this.userId) return
 
     const sanatizedId = this.makeId(userId)
+    this.callRetries.delete(sanatizedId)
     this.myPeer.call(sanatizedId, this.myStream)
   }
 
@@ -100,6 +138,7 @@ export default class ShareScreenManager {
     if (userId === this.userId) return
 
     const sanatizedId = this.makeId(userId)
+    this.callRetries.delete(sanatizedId)
     store.dispatch(removeVideoStream(sanatizedId))
   }
 }

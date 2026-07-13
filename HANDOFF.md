@@ -1,130 +1,138 @@
-# Handoff: Meta Sora — Lock Room feature (Meeting Room + CEO Room)
+# Handoff: Meta Sora — Annex map, portal, doors, spatial audio
 
-## Status: feature-complete, typechecked (previous session), one geometry bug found & fixed this session, still NOT runtime-tested in-browser
+## Status (2026-07-13)
 
-This continues the previous handoff. No new features were added this session — this was a
-verification pass on the two outstanding TODO items, done without a browser/display
-(none available in this environment, and `npm install` is also blocked here — no network
-access to the registry, so I could not re-run `tsc` either). Everything below was verified
-by parsing the actual tilemap JSON and reading the code, not by eyeballing.
+Feature-complete for what was asked this session. `tsc` (client + server) and ESLint are both
+0 errors, `npm run build` succeeds end-to-end. **Not personally verified live in a browser** —
+this sandbox's Browser pane cannot run Phaser's game loop at all (`document.visibilityState`
+reports `"hidden"`, so `requestAnimationFrame` never fires — confirmed via
+`window.game.loop.running === false`). Everything below was iteratively tested by the user in
+their own Chrome and reported back; several rounds of back-and-forth were needed to get a couple
+of things right (see "Known gotchas" below before touching related code again).
 
-## What I did this session
+If you're picking this up in a fresh session: **read this whole file before changing anything**,
+then ask the user what's next rather than assuming.
 
-### 1. Verified the CEO Room geometry — found and fixed a real bug
+## What's in the codebase now
 
-The previous handoff flagged `ZONE_BOUNDS.ceo` / `mediaZoneConfigs['ceo']` as an eyeballed
-rectangle that hadn't been pixel-verified. I parsed `client/public/assets/map/map.json`
-(the `Ground` layer + `FloorAndGround` tileset's `collides` tile properties) and reconstructed
-the actual walls around the CEO Room:
+### 1. Annex map — a second office, same room/session
 
-- Left wall: tile column **x=19**, right wall: tile column **x=33** (checked across every
-  interior row, y=3 through y=8)
-- So the real interior floor is tiles **x=20 to x=32** (13 tiles), pixel range **[640, 1056)**
+- `client/public/assets/map/map-annex.json` + `.tmx` — a **byte-for-byte duplicate** of
+  `map.json`/`.tmx` (same tilesets, same Ground layer, same furniture). Do not hand-edit tile
+  data in this file expecting it to diverge from the main map without a reason — the user
+  explicitly asked for "plek ketiplek" (identical) after an earlier custom-room-design attempt
+  didn't look right to them.
+- Both `map.json` and `map-annex.json` load into the **same persistent Phaser scene**
+  (`client/src/scenes/Game.ts`), at the same time, for the whole session. There is no
+  `scene.restart()` anywhere in the map-switching path anymore — an earlier version used it and
+  it permanently broke keyboard input (see gotcha #1 below).
+- Annex content is rendered/collided at a world offset: `ANNEX_WORLD_OFFSET = { x: 1280, y: 0 }`
+  (`client/src/config/portals.ts`), i.e. directly beside the main map's right edge (main map is
+  1280×960px / 40×30 tiles). This offset is baked into every annex zone/door/portal coordinate
+  in the client configs and mirrored in `server/rooms/SkyOffice.ts`'s `ZONE_BOUNDS`.
+  - **Why an offset at all, if it's one shared room?** The server checks lock/zone membership
+    purely by comparing a player's raw x/y against a rectangle — it has no concept of "which
+    map". If the two maps' local coordinates overlapped, the server could see a player in the
+    annex and think they're standing in the main map's Lounge. The offset just keeps the two
+    maps' coordinate ranges from ever overlapping.
 
-The configured zone was `{ x: 608, y: 32, width: 416, height: 256 }` → pixel range `[608, 1024)`.
-That's shifted 32px (one tile) to the left of the real room:
-- The left 32px of the old zone (608–640) overlapped the wall tile itself — harmless, a
-  player can't stand there anyway.
-- The **right 32px of actual walkable floor (1024–1056) was outside the zone** — this is
-  the bug. I checked for furniture that might block that strip (there's one collidable
-  decorative object at tile (32, 4)) but most of that column is open floor.
+### 2. Portal — walk up, press R, instant teleport
 
-Because `isPlayerInZone` (server, used for lock/unlock and the auto-unlock sweep) and
-`getMediaZoneAt` (client, used for the media panel + door lock button) both use this same
-rect, the practical impact was:
-- A player standing in that strip couldn't see the media panel or the lock/unlock button
-  for the CEO Room, even though they were physically inside it.
-- Worse: if everyone else left the room and one player retreated into that strip, the 5s
-  auto-unlock sweep would see "nobody inside" and force-unlock the room while someone was
-  still standing in it.
+- `client/src/items/Portal.ts` (extends `Item`, same interact pattern as Computer/Whiteboard —
+  shows a "Press R to travel to X" dialog on overlap, activates on keyR in `MyPlayer.ts`'s
+  `ItemType.PORTAL` case).
+- `client/src/config/portals.ts` defines exactly two portals: main office (tile 21,27 — bottom
+  end of the Meeting↔Workspace corridor) ↔ annex (tile 6,12 — left end of the Lounge↔Meeting
+  corridor, against the outer wall). These are **asymmetric locations by the user's explicit
+  request** ("beda spot, jangan cuma mirror") — don't "simplify" them back to mirrored positions.
+- Activation just calls `MyPlayer.setPosition`/`network.updatePlayer` — no scene reload, so
+  keyboard/input state is untouched.
 
-**Fix applied** (both copies, kept in sync per the existing comments):
-- `server/rooms/SkyOffice.ts`: `ZONE_BOUNDS.ceo` → `{ x: 640, y: 32, width: 416, height: 256 }`
-- `client/src/config/mediaZones.ts`: the `ceo` entry → `x: 640` (width/y/height unchanged),
-  plus corrected the doc comment above it (was citing the wrong tile range)
+### 3. Doors — sized bigger than their true 1-tile gap, but the collider is NOT
 
-Lounge, Meeting Room (studio), and Grand Hall (hall) were checked the same way and all
-match their real wall positions exactly — no changes needed there.
+- `client/src/items/Door.ts` generates `door_h` (32×64, "wood"), `door_v` (32×96, "wood"), and
+  `door_glass_v` (32×96, glass/transparent — used for the Workspace door specifically) at
+  runtime via `Phaser.GameObjects.Graphics`, no external art assets.
+- **Critical detail, easy to break again:** for horizontal doors, only the BOTTOM 32×32 of the
+  64px-tall sprite is the real wall gap; the top 32px is a purely decorative extension into the
+  room (the user wanted the panel to visually "reach the wall" without the gap itself changing).
+  `Game.ts`'s `addDoors()` explicitly resizes the physics body back down to the true 32×32 gap
+  (`body.setSize(32,32).setOffset(0,32)`) for every `orientation: 'h'` door. If you ever resize
+  the visual sprite again, you must keep this collider restriction in sync, or you'll reintroduce
+  the "stuck entering rooms" / "name tag lags behind" bug (see gotcha #2).
+- `client/src/config/doors.ts`: horizontal door y-position math is **anchored to the bottom edge**
+  (the true gap), not centered — `y = trueGapY - 32, height = 64`. Getting this backwards
+  (centering the taller sprite on the old center) visibly detaches the door from the wall.
 
-I did not re-verify the door position (`ceo-door` in `client/src/config/doors.ts`) since
-its comment already cites a specific gap tile `(21, 9)`, which I confirmed independently
-against the same collision data — it's correct and unaffected by the zone-rect fix.
+### 4. Media zones — "Grand Hall" renamed to "Workspace"
 
-### 2. Re-read the full lock-room implementation end to end
+- `client/src/config/mediaZones.ts` / `server/rooms/SkyOffice.ts`: ids `hall`/`annexHall` are now
+  `workspace`/`annexWorkspace` everywhere (zone bounds, door-zone map, lock logic, UI copy in
+  `Sidebar.tsx`). Don't reintroduce the old id — nothing reads it anymore.
+- `findZoneAt(x, y)` (exported from `mediaZones.ts`) is the single shared helper for "which zone
+  is this point in" — used by both `Game.ts` (for the local player's current-zone UI state) and
+  `OtherPlayer.ts` (for spatial-audio/lock-isolation below). Keep using this instead of
+  reimplementing the zone-rect lookup.
 
-Went through `MediaStore.ts`, `Network.ts`, `Door.ts`, `Game.ts`, `MediaPlayerPanel.tsx`,
-`Sidebar.tsx`, `OfficeState.ts`, and `SkyOffice.ts` again in full. Everything matches what
-the previous handoff describes — lock/unlock message handlers, server-side position
-verification (`isPlayerInZone`), the "original locker OR anyone currently inside" unlock
-rule, the 5s sweep, the `onLeave` immediate-release-if-room-now-empty path, the door
-collision/tween logic, and the Redux sync — all read correctly. I didn't find any other
-bugs. (I could not run `tsc` to re-confirm the previous session's "0 errors" server-side
-claim, since dependency install is blocked in this environment — see below.)
+### 5. Spatial audio + locked-room privacy
 
-## Environment limitation (why item 1 from the last handoff is still open)
+- `OtherPlayer.ts`'s `updateCallVolume()` (called every frame from `preUpdate`) sets each
+  connected peer's call volume based on distance (`MAX_HEARING_DISTANCE = 260`, linear falloff),
+  via a new `WebRTC.setPeerVolume(userId, volume)` method (`client/src/web/WebRTC.ts`).
+- **Why isolation is needed at all:** the WebRTC call itself connects based on a proximity hitbox
+  that's 6×/4× the player sprite's size (set in `OtherPlayer.ts`'s `GameObjectFactory.register`
+  block) — that box does not know about walls, so two players separated by a locked door's wall
+  can still fall inside each other's connect-radius. `updateCallVolume()` checks
+  `findZoneAt` for both players; if they're in different zones and either zone is currently
+  locked (`store.getState().media.zones[...].locked`), volume is forced to 0 regardless of raw
+  distance. Video is not hidden, only audio is muted — that was the literal ask.
 
-This session ran in a sandbox with no network access (`npm install` gets a 403 from the
-registry) and no display. So I could not:
-- install dependencies or re-run `tsc --noEmit`
-- start the dev server or click through the UI in a real browser
+### 6. Computer/Whiteboard ids are map-prefixed
 
-Everything above was verified statically (tilemap data + code reading), which is why the
-geometry fix could be pinned down precisely, but it's not a substitute for actually
-walking around in-game.
+- Since the annex duplicates the main map's `Computer`/`Whiteboard` object layers, ids are
+  `main-0`, `main-1`, ..., `annex-0`, ... (both `Game.ts`'s `loadMapContent(map, offset,
+  mapPrefix)` and `server/rooms/SkyOffice.ts`'s `onCreate`, which now creates 10 computers + 6
+  whiteboards total, not 5 + 3). Without the prefix, two physically different desks in different
+  maps would resolve to the same server-side Computer entry and incorrectly share screen-share
+  state.
 
-## Local install note (not related to the code changes)
+### 7. Misc smaller fixes this session
 
-Running `yarn && yarn start` at the repo root hit a Yarn Classic (1.22.22) parser bug:
-`SyntaxError: Invalid value type <line>:0 in yarn.lock`.
+- `.eslintrc.js` had a malformed rule config (`no-namespace` severity) that silently made ESLint
+  refuse to run at all — fixed.
+- Client `tsc` (not `--noEmit`, the actual `npm run build` path) had ~40 pre-existing type errors
+  (Phaser API nullable-return patterns, a peerjs `Peer.MediaConnection` namespace-vs-type issue
+  after a peerjs version bump, a missing `x` in `PhaserGame.ts`'s gravity config, a react-redux 7
+  vs `@types/react` 18 `Provider` JSX incompatibility) — all fixed, build is green now.
+- `MediaPlayerPanel.tsx` shrunk (336px → 252px wide, smaller embeds) per request.
+- `Bootstrap.ts` no longer auto-connects the webcam/mic based on a remembered browser permission
+  grant (`WebRTC.checkPreviousPermission` removed) — camera/mic now only ever turn on from an
+  explicit "Connect Webcam" click, per the user's privacy expectation.
 
-Root cause found by diffing against the user's actual original repo (which installs fine):
-the root `yarn.lock` that was floating around in this project's zip was **not genuine yarn
-output** — its `resolved` URLs pointed at `registry.npmjs.org/...` with no trailing
-`#<sha1>`, instead of Yarn's native `registry.yarnpkg.com/...#<sha1>` format, and a few
-specifier groups were merged incorrectly (e.g. two `@types/bson` entries that should have
-stayed separate got collapsed into one). Likely got rewritten by some non-yarn tool/process
-at some point along the way. `package.json` (root/client/types) is byte-identical to the
-original repo, so no dependencies changed — the original lockfile still applies cleanly.
+## Known gotchas (read before touching related code)
 
-**Fix applied:** replaced the mangled root `yarn.lock` with the genuine one from the user's
-original repo. `client/yarn.lock` and `types/yarn.lock` were untouched — diffing them against
-the original repo's copies would be the first move if either ever throws the same error.
+1. **Never reintroduce `scene.restart()` for map switching.** It broke keyboard input
+   permanently, because `registerKeys()` is called exactly once, from `LoginDialog.tsx`, not from
+   `Game.create()`. The dual-tilemap-single-scene approach exists specifically to avoid ever
+   needing a scene restart.
+2. **Door visual size ≠ door collider size.** See section 3 above. If you resize a door sprite
+   for looks, the collider needs an explicit, separate size that matches the TRUE wall gap, not
+   the decorative sprite bounds — otherwise the player's separate name-tag/container physics body
+   (it collides independently, floating ~30px above the character) can get blocked even after the
+   main sprite has cleared the doorway, which looks like "stuck" + "name lags behind."
+3. **This sandbox cannot visually test Meta Sora.** See "Status" above. Don't claim a visual/
+   timing bug is fixed without the user confirming — for one seam/render bug this session, ~7
+   turns were burned on sequential guesses before switching to "give the user a console script to
+   run and report back real numbers," which converged fast. Prefer that pattern over guessing
+   again for future rendering bugs.
+4. **Follow literal visual-correction instructions exactly**, don't "clean up" into a symmetric
+   version. E.g. "2 kotak ke atas, bukan ke samping, bagian bawah tetap di tembok" meant: grow the
+   door sprite by exactly one tile, anchored so the ORIGINAL bottom edge doesn't move — not
+   centered growth.
 
-## What's left for you (in order)
+## Dev environment
 
-1. **Run it for real** — this is now the single most important item, unchanged from last
-   time:
-   - `npm run dev` (or your usual client+server flow) and re-run `tsc --noEmit` on both
-     `client/` and `server/` to reconfirm the previous session's clean typecheck still holds.
-   - Walk into the CEO Room and specifically hug the right-hand wall — confirm the media
-     panel and lock button now appear there (this is the strip that was broken before the
-     fix).
-   - Walk into Meeting Room, click "Kunci Ruangan", confirm the door slides shut and stays
-     shut for a second browser tab/player trying to walk in.
-   - Confirm "Buka Kunci" from inside works, and that leaving the room without unlocking
-     triggers the 5s auto-unlock sweep once the room is empty.
-   - Confirm the 🔒/🔓 map label and the door tint update live.
-2. Optional polish (not done, low priority, unchanged from last handoff):
-   - Toast/snackbar when your own lock gets force-released by the 5s empty-room sweep.
-   - Disable the "Kunci Ruangan" button for a beat right after clicking to avoid
-     double-sends if the network round-trip is slow.
-
-## Files touched this session
-```
-server/rooms/SkyOffice.ts        (ZONE_BOUNDS.ceo x-offset fix)
-client/src/config/mediaZones.ts  (ceo zone x-offset fix + comment correction)
-```
-
-## Files touched in previous sessions (for reference, unchanged this time)
-```
-client/src/stores/MediaStore.ts
-client/src/services/Network.ts
-client/src/items/Door.ts
-client/src/scenes/Game.ts
-client/src/components/MediaPlayerPanel.tsx
-client/src/components/Sidebar.tsx
-types/Messages.ts
-types/IOfficeState.ts
-server/rooms/schema/OfficeState.ts
-client/src/config/doors.ts
-```
+- `npm run start` from repo root — Colyseus server on `:2567`.
+- `npm run dev` from `client/` — Vite on `:5173`.
+- If the server seems unresponsive after a restart, check for a zombie process holding `:2567`
+  (`lsof -i :2567`) — `ts-node-dev`'s respawn occasionally races and leaves one behind.

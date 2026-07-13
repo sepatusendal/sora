@@ -7,6 +7,7 @@ import Network from '../services/Network'
 import Chair from '../items/Chair'
 import Computer from '../items/Computer'
 import Whiteboard from '../items/Whiteboard'
+import Portal from '../items/Portal'
 
 import { phaserEvents, Event } from '../events/EventCenter'
 import store from '../stores'
@@ -41,7 +42,7 @@ export default class MyPlayer extends Player {
   setPlayerTexture(texture: string) {
     this.playerTexture = texture
     this.anims.play(`${this.playerTexture}_idle_down`, true)
-    phaserEvents.emit(Event.MY_PLAYER_TEXTURE_CHANGE, this.x, this.y, this.anims.currentAnim.key)
+    phaserEvents.emit(Event.MY_PLAYER_TEXTURE_CHANGE, this.x, this.y, this.anims.currentAnim!.key)
   }
 
   handleJoystickMovement(movement: JoystickMovement) {
@@ -61,24 +62,42 @@ export default class MyPlayer extends Player {
 
     if (Phaser.Input.Keyboard.JustDown(keyR)) {
       switch (item?.itemType) {
-        case ItemType.COMPUTER:
+        case ItemType.COMPUTER: {
           const computer = item as Computer
           computer.openDialog(this.playerId, network)
           break
-        case ItemType.WHITEBOARD:
+        }
+        case ItemType.WHITEBOARD: {
           const whiteboard = item as Whiteboard
           whiteboard.openDialog(network)
           break
-        case ItemType.VENDINGMACHINE:
+        }
+        case ItemType.VENDINGMACHINE: {
           // hacky and hard-coded, but leaving it as is for now
           const url = 'https://github.com/sepatusendal/meta-sora'
           openURL(url)
           break
+        }
+        case ItemType.PORTAL: {
+          // both maps live in the same persistent scene, so travelling is
+          // just an instant reposition (same pattern as sitting in a chair)
+          // -- no scene reload, no tilemap swap, keyboard binding never breaks
+          const portal = item as Portal
+          this.setVelocity(0, 0)
+          this.setPosition(portal.targetX, portal.targetY)
+          this.playContainerBody.setVelocity(0, 0)
+          this.playerContainer.setPosition(portal.targetX, portal.targetY - 30)
+          this.setDepth(portal.targetY)
+          portal.clearDialogBox()
+          playerSelector.selectedItem = undefined
+          network.updatePlayer(portal.targetX, portal.targetY, this.anims.currentAnim!.key)
+          break
+        }
       }
     }
 
     switch (this.playerBehavior) {
-      case PlayerBehavior.IDLE:
+      case PlayerBehavior.IDLE: {
         // if press E in front of selected chair
         if (Phaser.Input.Keyboard.JustDown(keyE) && item?.itemType === ItemType.CHAIR) {
           const chairItem = item as Chair
@@ -114,7 +133,7 @@ export default class MyPlayer extends Player {
                 playerSelector.setPosition(0, 0)
               }
               // send new location and anim to server
-              network.updatePlayer(this.x, this.y, this.anims.currentAnim.key)
+              network.updatePlayer(this.x, this.y, this.anims.currentAnim!.key)
             },
             loop: false,
           })
@@ -154,13 +173,13 @@ export default class MyPlayer extends Player {
         }
         // update character velocity
         this.setVelocity(vx, vy)
-        this.body.velocity.setLength(speed)
+        ;(this.body as Phaser.Physics.Arcade.Body).velocity.setLength(speed)
         // also update playerNameContainer velocity
         this.playContainerBody.setVelocity(vx, vy)
         this.playContainerBody.velocity.setLength(speed)
 
         // update animation according to velocity and send new location and anim to server
-        if (vx !== 0 || vy !== 0) network.updatePlayer(this.x, this.y, this.anims.currentAnim.key)
+        if (vx !== 0 || vy !== 0) network.updatePlayer(this.x, this.y, this.anims.currentAnim!.key)
         if (vx > 0) {
           this.play(`${this.playerTexture}_run_right`, true)
         } else if (vx < 0) {
@@ -170,29 +189,30 @@ export default class MyPlayer extends Player {
         } else if (vy < 0) {
           this.play(`${this.playerTexture}_run_up`, true)
         } else {
-          const parts = this.anims.currentAnim.key.split('_')
+          const parts = this.anims.currentAnim!.key.split('_')
           parts[1] = 'idle'
           const newAnim = parts.join('_')
           // this prevents idle animation keeps getting called
-          if (this.anims.currentAnim.key !== newAnim) {
+          if (this.anims.currentAnim!.key !== newAnim) {
             this.play(parts.join('_'), true)
             // send new location and anim to server
-            network.updatePlayer(this.x, this.y, this.anims.currentAnim.key)
+            network.updatePlayer(this.x, this.y, this.anims.currentAnim!.key)
           }
         }
         break
+      }
 
       case PlayerBehavior.SITTING:
         // back to idle if player press E while sitting
         if (Phaser.Input.Keyboard.JustDown(keyE)) {
-          const parts = this.anims.currentAnim.key.split('_')
+          const parts = this.anims.currentAnim!.key.split('_')
           parts[1] = 'idle'
           this.play(parts.join('_'), true)
           this.playerBehavior = PlayerBehavior.IDLE
           this.chairOnSit?.clearDialogBox()
           playerSelector.setPosition(this.x, this.y)
           playerSelector.update(this, cursors)
-          network.updatePlayer(this.x, this.y, this.anims.currentAnim.key)
+          network.updatePlayer(this.x, this.y, this.anims.currentAnim!.key)
         }
         break
     }
@@ -225,7 +245,7 @@ Phaser.GameObjects.GameObjectFactory.register(
     this.scene.physics.world.enableBody(sprite, Phaser.Physics.Arcade.DYNAMIC_BODY)
 
     const collisionScale = [0.5, 0.2]
-    sprite.body
+    sprite.body!
       .setSize(sprite.width * collisionScale[0], sprite.height * collisionScale[1])
       .setOffset(
         sprite.width * (1 - collisionScale[0]) * 0.5,

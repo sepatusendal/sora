@@ -1,4 +1,8 @@
+import fs from 'fs'
 import http from 'http'
+import https from 'https'
+import os from 'os'
+import path from 'path'
 import express from 'express'
 import cors from 'cors'
 import { Server, LobbyRoom } from 'colyseus'
@@ -16,7 +20,20 @@ app.use(cors())
 app.use(express.json())
 // app.use(express.static('dist'))
 
-const server = http.createServer(app)
+// In dev, the client runs over HTTPS via vite-plugin-mkcert, so the browser
+// requires wss:// here too (mixed-content). Reuse the same mkcert cert if present.
+const mkcertDir = path.join(os.homedir(), '.vite-plugin-mkcert')
+const certPath = path.join(mkcertDir, 'cert.pem')
+const keyPath = path.join(mkcertDir, 'dev.pem')
+const useHttps =
+  process.env.NODE_ENV !== 'production' && fs.existsSync(certPath) && fs.existsSync(keyPath)
+
+const server = useHttps
+  ? https.createServer(
+      { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
+      app
+    )
+  : http.createServer(app)
 const gameServer = new Server({
   server,
 })
@@ -43,4 +60,4 @@ gameServer.define(RoomType.CUSTOM, SkyOffice).enableRealtimeListing()
 app.use('/colyseus', monitor())
 
 gameServer.listen(port)
-console.log(`Listening on ws://localhost:${port}`)
+console.log(`Listening on ${useHttps ? 'wss' : 'ws'}://localhost:${port}`)

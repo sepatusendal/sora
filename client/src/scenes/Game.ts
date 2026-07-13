@@ -9,6 +9,7 @@ import Computer from '../items/Computer'
 import Whiteboard from '../items/Whiteboard'
 import VendingMachine from '../items/VendingMachine'
 import Door, { createDoorTextures } from '../items/Door'
+import Portal, { createPortalTexture } from '../items/Portal'
 import '../characters/MyPlayer'
 import '../characters/OtherPlayer'
 import MyPlayer from '../characters/MyPlayer'
@@ -24,8 +25,18 @@ import { setFocused, setShowChat } from '../stores/ChatStore'
 import { setCurrentMediaZone } from '../stores/MediaStore'
 import { NavKeys, Keyboard } from '../../../types/KeyboardState'
 import { phaserEvents, Event } from '../events/EventCenter'
-import { mediaZoneConfigs, MediaZoneConfig } from '../config/mediaZones'
+import { mediaZoneConfigs, MediaZoneConfig, findZoneAt } from '../config/mediaZones'
 import { doorConfigs, DOOR_OPEN_DISTANCE, DOOR_CLOSE_DISTANCE, DOOR_ZONE_MAP } from '../config/doors'
+import { portalConfigs, ANNEX_WORLD_OFFSET } from '../config/portals'
+
+const MAIN_OFFSET = { x: 0, y: 0 }
+
+interface MapObjectGroups {
+  chairs: Phaser.Physics.Arcade.StaticGroup
+  computers: Phaser.Physics.Arcade.StaticGroup
+  whiteboards: Phaser.Physics.Arcade.StaticGroup
+  vendingMachines: Phaser.Physics.Arcade.StaticGroup
+}
 
 export default class Game extends Phaser.Scene {
   network!: Network
@@ -33,6 +44,7 @@ export default class Game extends Phaser.Scene {
   private keyE!: Phaser.Input.Keyboard.Key
   private keyR!: Phaser.Input.Keyboard.Key
   private map!: Phaser.Tilemaps.Tilemap
+  private annexMap!: Phaser.Tilemaps.Tilemap
   myPlayer!: MyPlayer
   private playerSelector!: Phaser.GameObjects.Zone
   private otherPlayers!: Phaser.Physics.Arcade.Group
@@ -40,6 +52,7 @@ export default class Game extends Phaser.Scene {
   computerMap = new Map<string, Computer>()
   private whiteboardMap = new Map<string, Whiteboard>()
   private doors: Door[] = []
+  private portals!: Phaser.Physics.Arcade.StaticGroup
   private currentMediaZoneId: string | null = null
   private lastMediaDistanceEmit = 0
   private mediaZoneLabels = new Map<string, Phaser.GameObjects.Text>()
@@ -51,34 +64,42 @@ export default class Game extends Phaser.Scene {
 
   registerKeys() {
     this.cursors = {
-      ...this.input.keyboard.createCursorKeys(),
-      ...(this.input.keyboard.addKeys('W,S,A,D') as Keyboard),
+      ...this.input.keyboard!.createCursorKeys(),
+      ...(this.input.keyboard!.addKeys('W,S,A,D') as Keyboard),
     }
 
     // maybe we can have a dedicated method for adding keys if more keys are needed in the future
-    this.keyE = this.input.keyboard.addKey('E')
-    this.keyR = this.input.keyboard.addKey('R')
-    this.input.keyboard.disableGlobalCapture()
-    this.input.keyboard.on('keydown-ENTER', (event) => {
+    this.keyE = this.input.keyboard!.addKey('E')
+    this.keyR = this.input.keyboard!.addKey('R')
+    this.input.keyboard!.disableGlobalCapture()
+    this.input.keyboard!.on('keydown-ENTER', () => {
       store.dispatch(setShowChat(true))
       store.dispatch(setFocused(true))
     })
-    this.input.keyboard.on('keydown-ESC', (event) => {
+    this.input.keyboard!.on('keydown-ESC', () => {
       store.dispatch(setShowChat(false))
     })
   }
 
   disableKeys() {
-    this.input.keyboard.enabled = false
+    this.input.keyboard!.enabled = false
   }
 
   enableKeys() {
-    this.input.keyboard.enabled = true
+    this.input.keyboard!.enabled = true
   }
 
   create(data: { network: Network }) {
     this.events.once('shutdown', () => {
       this.unsubscribeLockWatcher?.()
+      phaserEvents.off(Event.PLAYER_JOINED, this.handlePlayerJoined, this)
+      phaserEvents.off(Event.PLAYER_LEFT, this.handlePlayerLeft, this)
+      phaserEvents.off(Event.MY_PLAYER_READY, this.handleMyPlayerReady, this)
+      phaserEvents.off(Event.MY_PLAYER_VIDEO_CONNECTED, this.handleMyVideoConnected, this)
+      phaserEvents.off(Event.PLAYER_UPDATED, this.handlePlayerUpdated, this)
+      phaserEvents.off(Event.ITEM_USER_ADDED, this.handleItemUserAdded, this)
+      phaserEvents.off(Event.ITEM_USER_REMOVED, this.handleItemUserRemoved, this)
+      phaserEvents.off(Event.UPDATE_DIALOG_BUBBLE, this.handleChatMessageAdded, this)
     })
     if (!data.network) {
       throw new Error('server instance missing')
@@ -88,69 +109,45 @@ export default class Game extends Phaser.Scene {
 
     createCharacterAnims(this.anims)
 
+    // main office
     this.map = this.make.tilemap({ key: 'tilemap' })
-    const FloorAndGround = this.map.addTilesetImage('FloorAndGround', 'tiles_wall')
-
-    const groundLayer = this.map.createLayer('Ground', FloorAndGround)
+    const FloorAndGround = this.map.addTilesetImage('FloorAndGround', 'tiles_wall')!
+    const groundLayer = this.map.createLayer('Ground', FloorAndGround)!
     groundLayer.setCollisionByProperty({ collides: true })
+    this.bakeGroundLayer(groundLayer, this.map.widthInPixels, this.map.heightInPixels, MAIN_OFFSET)
+
+    // annex — a second, physically separate area placed right beside the
+    // main office (see ANNEX_WORLD_OFFSET), loaded into the SAME scene at
+    // the same time as the main map. Nothing ever tears this down or
+    // reloads it: crossing between the two areas is just an instant
+    // reposition (see Portal / MyPlayer's keyR handling), so player input
+    // bindings (registerKeys(), only ever called once from LoginDialog)
+    // never go stale.
+    this.annexMap = this.make.tilemap({ key: 'tilemap-annex' })
+    const annexFloorAndGround = this.annexMap.addTilesetImage('FloorAndGround', 'tiles_wall')!
+    const annexGroundLayer = this.annexMap.createLayer('Ground', annexFloorAndGround)!
+    annexGroundLayer.setPosition(ANNEX_WORLD_OFFSET.x, ANNEX_WORLD_OFFSET.y)
+    annexGroundLayer.setCollisionByProperty({ collides: true })
+    this.bakeGroundLayer(
+      annexGroundLayer,
+      this.annexMap.widthInPixels,
+      this.annexMap.heightInPixels,
+      ANNEX_WORLD_OFFSET
+    )
 
     // debugDraw(groundLayer, this)
 
     this.myPlayer = this.add.myPlayer(705, 500, 'adam', this.network.mySessionId)
     this.playerSelector = new PlayerSelector(this, 0, 0, 16, 16)
 
-    // import chair objects from Tiled map to Phaser
-    const chairs = this.physics.add.staticGroup({ classType: Chair })
-    const chairLayer = this.map.getObjectLayer('Chair')
-    chairLayer.objects.forEach((chairObj) => {
-      const item = this.addObjectFromTiled(chairs, chairObj, 'chairs', 'chair') as Chair
-      // custom properties[0] is the object direction specified in Tiled
-      item.itemDirection = chairObj.properties[0].value
-    })
+    const mainObjects = this.loadMapContent(this.map, MAIN_OFFSET, 'main')
+    const annexObjects = this.loadMapContent(this.annexMap, ANNEX_WORLD_OFFSET, 'annex')
 
-    // import computers objects from Tiled map to Phaser
-    const computers = this.physics.add.staticGroup({ classType: Computer })
-    const computerLayer = this.map.getObjectLayer('Computer')
-    computerLayer.objects.forEach((obj, i) => {
-      const item = this.addObjectFromTiled(computers, obj, 'computers', 'computer') as Computer
-      item.setDepth(item.y + item.height * 0.27)
-      const id = `${i}`
-      item.id = id
-      this.computerMap.set(id, item)
-    })
-
-    // import whiteboards objects from Tiled map to Phaser
-    const whiteboards = this.physics.add.staticGroup({ classType: Whiteboard })
-    const whiteboardLayer = this.map.getObjectLayer('Whiteboard')
-    whiteboardLayer.objects.forEach((obj, i) => {
-      const item = this.addObjectFromTiled(
-        whiteboards,
-        obj,
-        'whiteboards',
-        'whiteboard'
-      ) as Whiteboard
-      const id = `${i}`
-      item.id = id
-      this.whiteboardMap.set(id, item)
-    })
-
-    // import vending machine objects from Tiled map to Phaser
-    const vendingMachines = this.physics.add.staticGroup({ classType: VendingMachine })
-    const vendingMachineLayer = this.map.getObjectLayer('VendingMachine')
-    vendingMachineLayer.objects.forEach((obj, i) => {
-      this.addObjectFromTiled(vendingMachines, obj, 'vendingmachines', 'vendingmachine')
-    })
-
-    // import other objects from Tiled map to Phaser
-    this.addGroupFromTiled('Wall', 'tiles_wall', 'FloorAndGround', false)
-    this.addGroupFromTiled('Objects', 'office', 'Modern_Office_Black_Shadow', false)
-    this.addGroupFromTiled('ObjectsOnCollide', 'office', 'Modern_Office_Black_Shadow', true)
-    this.addGroupFromTiled('GenericObjects', 'generic', 'Generic', false)
-    this.addGroupFromTiled('GenericObjectsOnCollide', 'generic', 'Generic', true)
-    this.addGroupFromTiled('Basement', 'basement', 'Basement', true)
-
-    // auto sliding doors at every room doorway
+    // auto sliding doors at every room doorway (both maps)
     this.addDoors()
+
+    // teleport points to/from the annex
+    this.addPortals()
 
     // media zone floor labels (subtle, in-world hint of where shared media plays)
     this.addMediaZoneLabels()
@@ -158,14 +155,25 @@ export default class Game extends Phaser.Scene {
     this.otherPlayers = this.physics.add.group({ classType: OtherPlayer })
 
     this.cameras.main.zoom = 1.5
+    this.cameras.main.setRoundPixels(true)
     this.cameras.main.startFollow(this.myPlayer, true)
 
     this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], groundLayer)
-    this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], vendingMachines)
+    this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], annexGroundLayer)
 
     this.physics.add.overlap(
       this.playerSelector,
-      [chairs, computers, whiteboards, vendingMachines],
+      [
+        mainObjects.chairs,
+        mainObjects.computers,
+        mainObjects.whiteboards,
+        mainObjects.vendingMachines,
+        annexObjects.chairs,
+        annexObjects.computers,
+        annexObjects.whiteboards,
+        annexObjects.vendingMachines,
+        this.portals,
+      ],
       this.handleItemSelectorOverlap,
       undefined,
       this
@@ -190,18 +198,146 @@ export default class Game extends Phaser.Scene {
     this.network.onChatMessageAdded(this.handleChatMessageAdded, this)
   }
 
+  /**
+   * The Ground layer is 100% static — nothing ever repaints it at runtime —
+   * so bake it to one flat image instead of leaving it a live TilemapLayer.
+   * TilemapLayer uses a specialized batched-tile render path that, unlike
+   * regular Sprites/Images (furniture, players — none of which ever show
+   * this), produces thin 1px seam/gap lines between some tile rows
+   * depending on the camera's exact scroll position when it renders.
+   * A baked Image goes through the normal render path instead, so it can't
+   * have that per-tile-row problem. Collision keeps using the original
+   * `layer` (now just hidden) — this only swaps what gets drawn.
+   */
+  private bakeGroundLayer(
+    layer: Phaser.Tilemaps.TilemapLayer,
+    width: number,
+    height: number,
+    offset: { x: number; y: number }
+  ) {
+    const bake = this.add.renderTexture(offset.x, offset.y, width, height).setOrigin(0, 0)
+    bake.draw(layer, 0, 0)
+    bake.setDepth(-1)
+    layer.setVisible(false)
+  }
+
+  /**
+   * Populates one tilemap's furniture/wall object layers into the scene,
+   * offset by `offset` world pixels. Called once per map (main, annex) so
+   * both can coexist in the same persistent scene.
+   */
+  private loadMapContent(
+    map: Phaser.Tilemaps.Tilemap,
+    offset: { x: number; y: number },
+    mapPrefix: string
+  ): MapObjectGroups {
+    // import chair objects from Tiled map to Phaser
+    const chairs = this.physics.add.staticGroup({ classType: Chair })
+    map.getObjectLayer('Chair')!.objects.forEach((chairObj) => {
+      const item = this.addObjectFromTiled(map, offset, chairs, chairObj, 'chairs', 'chair') as Chair
+      // custom properties[0] is the object direction specified in Tiled
+      item.itemDirection = chairObj.properties[0].value
+    })
+
+    // import computers objects from Tiled map to Phaser. Ids are prefixed
+    // per-map ('main-0', 'annex-0', ...) because the annex is now a full
+    // duplicate of the main map's Computer layer — without the prefix,
+    // annex computer 0 and main computer 0 would resolve to the exact same
+    // server-side Computer entry (see SkyOffice.ts) and incorrectly share
+    // screen-share state across two physically different desks.
+    const computers = this.physics.add.staticGroup({ classType: Computer })
+    map.getObjectLayer('Computer')!.objects.forEach((obj, i) => {
+      const item = this.addObjectFromTiled(
+        map,
+        offset,
+        computers,
+        obj,
+        'computers',
+        'computer'
+      ) as Computer
+      item.setDepth(item.y + item.height * 0.27)
+      const id = `${mapPrefix}-${i}`
+      item.id = id
+      this.computerMap.set(id, item)
+    })
+
+    // import whiteboards objects from Tiled map to Phaser (same per-map id
+    // prefixing as computers, and for the same reason)
+    const whiteboards = this.physics.add.staticGroup({ classType: Whiteboard })
+    map.getObjectLayer('Whiteboard')!.objects.forEach((obj, i) => {
+      const item = this.addObjectFromTiled(
+        map,
+        offset,
+        whiteboards,
+        obj,
+        'whiteboards',
+        'whiteboard'
+      ) as Whiteboard
+      const id = `${mapPrefix}-${i}`
+      item.id = id
+      this.whiteboardMap.set(id, item)
+    })
+
+    // import vending machine objects from Tiled map to Phaser
+    const vendingMachines = this.physics.add.staticGroup({ classType: VendingMachine })
+    map.getObjectLayer('VendingMachine')!.objects.forEach((obj) => {
+      this.addObjectFromTiled(map, offset, vendingMachines, obj, 'vendingmachines', 'vendingmachine')
+    })
+    this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], vendingMachines)
+
+    // import other objects from Tiled map to Phaser
+    this.addGroupFromTiled(map, offset, 'Wall', 'tiles_wall', 'FloorAndGround', false)
+    this.addGroupFromTiled(map, offset, 'Objects', 'office', 'Modern_Office_Black_Shadow', false)
+    this.addGroupFromTiled(map, offset, 'ObjectsOnCollide', 'office', 'Modern_Office_Black_Shadow', true)
+    this.addGroupFromTiled(map, offset, 'GenericObjects', 'generic', 'Generic', false)
+    this.addGroupFromTiled(map, offset, 'GenericObjectsOnCollide', 'generic', 'Generic', true)
+    this.addGroupFromTiled(map, offset, 'Basement', 'basement', 'Basement', true)
+
+    return { chairs, computers, whiteboards, vendingMachines }
+  }
+
   private addDoors() {
     createDoorTextures(this)
     doorConfigs.forEach((config) => {
       const centerX = config.x + config.width * 0.5
       const centerY = config.y + config.height * 0.5
-      const texture = config.orientation === 'h' ? 'door_h' : 'door_v'
+      const texture =
+        config.style === 'glass'
+          ? 'door_glass_v'
+          : config.orientation === 'h'
+          ? 'door_h'
+          : 'door_v'
       const door = new Door(this, centerX, centerY, texture, config.id, config.orientation)
       this.add.existing(door)
       this.physics.add.existing(door, true) // static body
+      if (config.orientation === 'h') {
+        // door_h's sprite is 2 tiles tall (64px) for looks — the extra
+        // tile is purely decorative, extending up into the room, while
+        // only the BOTTOM tile is the real wall gap. Left at full size,
+        // the collider blocked the player's separate name-tag hitbox
+        // (which floats near head height, above the "feet" collision box)
+        // even after the player's own body had already cleared the
+        // doorway — that's what caused the "stuck entering/exiting" and
+        // the name tag lagging behind when it got shoved off course.
+        const body = door.body as Phaser.Physics.Arcade.StaticBody
+        body.setSize(32, 32).setOffset(0, 32)
+      }
       door.setDepth(centerY + config.height * 0.5)
       this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], door)
       this.doors.push(door)
+    })
+  }
+
+  private addPortals() {
+    createPortalTexture(this)
+    this.portals = this.physics.add.staticGroup({ classType: Portal })
+    portalConfigs.forEach((config) => {
+      const portal = this.portals
+        .get(config.x, config.y, 'portal')
+        .setDepth(config.y) as Portal
+      // static group's classType constructor only gets (scene, x, y, texture, frame) —
+      // finish wiring the portal-specific fields it needs to activate correctly
+      portal.setPortalData(config.id, config.targetX, config.targetY, config.label)
     })
   }
 
@@ -224,7 +360,7 @@ export default class Game extends Phaser.Scene {
 
     // Keep lockable zone labels in sync with lock state (🔒/🔓 prefix) without
     // re-creating the text objects — only lockable zones react here, since
-    // lounge/hall never carry a meaningful `locked` flag.
+    // lounge/workspace never carry a meaningful `locked` flag.
     const prevLocked = new Map<string, boolean>(
       mediaZoneConfigs
         .filter((zone) => zone.lockable)
@@ -274,9 +410,7 @@ export default class Game extends Phaser.Scene {
   }
 
   private getMediaZoneAt(x: number, y: number): MediaZoneConfig | undefined {
-    return mediaZoneConfigs.find(
-      (zone) => x >= zone.x && x <= zone.x + zone.width && y >= zone.y && y <= zone.y + zone.height
-    )
+    return findZoneAt(x, y)
   }
 
   private updateMediaZone(time: number) {
@@ -324,32 +458,36 @@ export default class Game extends Phaser.Scene {
   }
 
   private addObjectFromTiled(
+    map: Phaser.Tilemaps.Tilemap,
+    offset: { x: number; y: number },
     group: Phaser.Physics.Arcade.StaticGroup,
     object: Phaser.Types.Tilemaps.TiledObject,
     key: string,
     tilesetName: string
   ) {
-    const actualX = object.x! + object.width! * 0.5
-    const actualY = object.y! - object.height! * 0.5
+    const actualX = object.x! + object.width! * 0.5 + offset.x
+    const actualY = object.y! - object.height! * 0.5 + offset.y
     const obj = group
-      .get(actualX, actualY, key, object.gid! - this.map.getTileset(tilesetName).firstgid)
+      .get(actualX, actualY, key, object.gid! - map.getTileset(tilesetName)!.firstgid)
       .setDepth(actualY)
     return obj
   }
 
   private addGroupFromTiled(
+    map: Phaser.Tilemaps.Tilemap,
+    offset: { x: number; y: number },
     objectLayerName: string,
     key: string,
     tilesetName: string,
     collidable: boolean
   ) {
     const group = this.physics.add.staticGroup()
-    const objectLayer = this.map.getObjectLayer(objectLayerName)
+    const objectLayer = map.getObjectLayer(objectLayerName)!
     objectLayer.objects.forEach((object) => {
-      const actualX = object.x! + object.width! * 0.5
-      const actualY = object.y! - object.height! * 0.5
+      const actualX = object.x! + object.width! * 0.5 + offset.x
+      const actualY = object.y! - object.height! * 0.5 + offset.y
       group
-        .get(actualX, actualY, key, object.gid! - this.map.getTileset(tilesetName).firstgid)
+        .get(actualX, actualY, key, object.gid! - map.getTileset(tilesetName)!.firstgid)
         .setDepth(actualY)
     })
     if (this.myPlayer && collidable)
@@ -416,7 +554,7 @@ export default class Game extends Phaser.Scene {
     otherPlayer?.updateDialogBubble(content)
   }
 
-  update(t: number, dt: number) {
+  update(t: number) {
     if (this.myPlayer && this.network) {
       this.playerSelector.update(this.myPlayer, this.cursors)
       this.myPlayer.update(this.playerSelector, this.cursors, this.keyE, this.keyR, this.network)

@@ -17,6 +17,17 @@ body {
 #phaser-container {
   canvas {
     display: block;
+    // Phaser's `pixelArt: true` only controls its OWN internal render
+    // (WebGL/Canvas2D texture filtering) — it does NOT tell the BROWSER how
+    // to upscale the <canvas> element itself to the display's physical
+    // pixels. Without this, the browser's default smooth/bilinear scaling
+    // (kicks in on HiDPI/Retina screens, or whenever the CSS size doesn't
+    // exactly match the internal buffer size) blurs tile edges — visible
+    // as thin seam/gap lines that shift or vanish as the effective scale
+    // ratio changes (zoom, window resize, browser zoom).
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
   }
 }
 
