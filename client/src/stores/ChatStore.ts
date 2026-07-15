@@ -9,6 +9,9 @@ export enum MessageType {
   REGULAR_MESSAGE,
 }
 
+// mirrors the server's ChatMessageUpdateCommand cap so the client list can't grow unbounded
+const MAX_CHAT_MESSAGES = 100
+
 export const chatSlice = createSlice({
   name: 'chat',
   initialState: {
@@ -18,12 +21,14 @@ export const chatSlice = createSlice({
   },
   reducers: {
     pushChatMessage: (state, action: PayloadAction<IChatMessage>) => {
+      if (state.chatMessages.length >= MAX_CHAT_MESSAGES) state.chatMessages.shift()
       state.chatMessages.push({
         messageType: MessageType.REGULAR_MESSAGE,
         chatMessage: action.payload,
       })
     },
     pushPlayerJoinedMessage: (state, action: PayloadAction<string>) => {
+      if (state.chatMessages.length >= MAX_CHAT_MESSAGES) state.chatMessages.shift()
       state.chatMessages.push({
         messageType: MessageType.PLAYER_JOINED,
         chatMessage: {
@@ -34,6 +39,7 @@ export const chatSlice = createSlice({
       })
     },
     pushPlayerLeftMessage: (state, action: PayloadAction<string>) => {
+      if (state.chatMessages.length >= MAX_CHAT_MESSAGES) state.chatMessages.shift()
       state.chatMessages.push({
         messageType: MessageType.PLAYER_LEFT,
         chatMessage: {

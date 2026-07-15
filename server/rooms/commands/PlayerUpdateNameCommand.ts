@@ -7,6 +7,8 @@ type Payload = {
   name: string
 }
 
+const MAX_NAME_LENGTH = 16
+
 export default class PlayerUpdateNameCommand extends Command<IOfficeState, Payload> {
   execute(data: Payload) {
     const { client, name } = data
@@ -14,6 +16,6 @@ export default class PlayerUpdateNameCommand extends Command<IOfficeState, Paylo
     const player = this.room.state.players.get(client.sessionId)
 
     if (!player) return
-    player.name = name
+    player.name = name.slice(0, MAX_NAME_LENGTH)
   }
 }

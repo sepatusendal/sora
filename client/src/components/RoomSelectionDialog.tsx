@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { Suspense, lazy, useState } from 'react'
 import logo from '../images/logo.png'
 import styled from 'styled-components'
 import Button from '@mui/material/Button'
@@ -10,9 +10,13 @@ import Snackbar from '@mui/material/Snackbar'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 
-import { CustomRoomTable } from './CustomRoomTable'
 import { CreateRoomForm } from './CreateRoomForm'
 import { useAppSelector } from '../hooks'
+
+// MUI-heavy table not needed for first paint — split into its own chunk
+const CustomRoomTable = lazy(() =>
+  import('./CustomRoomTable').then((module) => ({ default: module.CustomRoomTable }))
+)
 
 import phaserGame from '../PhaserGame'
 import Bootstrap from '../scenes/Bootstrap'
@@ -168,7 +172,9 @@ export default function RoomSelectionDialog() {
                   </Tooltip>
                 </Title>
               </TitleWrapper>
-              <CustomRoomTable />
+              <Suspense fallback={null}>
+                <CustomRoomTable />
+              </Suspense>
               <Button
                 variant="contained"
                 color="secondary"

@@ -29,7 +29,7 @@ then ask the user what's next rather than assuming.
 - Annex content is rendered/collided at a world offset: `ANNEX_WORLD_OFFSET = { x: 1280, y: 0 }`
   (`client/src/config/portals.ts`), i.e. directly beside the main map's right edge (main map is
   1280×960px / 40×30 tiles). This offset is baked into every annex zone/door/portal coordinate
-  in the client configs and mirrored in `server/rooms/SkyOffice.ts`'s `ZONE_BOUNDS`.
+  in the client configs and mirrored in `server/rooms/Sora.ts`'s `ZONE_BOUNDS`.
   - **Why an offset at all, if it's one shared room?** The server checks lock/zone membership
     purely by comparing a player's raw x/y against a rectangle — it has no concept of "which
     map". If the two maps' local coordinates overlapped, the server could see a player in the
@@ -66,7 +66,7 @@ then ask the user what's next rather than assuming.
 
 ### 4. Media zones — "Grand Hall" renamed to "Workspace"
 
-- `client/src/config/mediaZones.ts` / `server/rooms/SkyOffice.ts`: ids `hall`/`annexHall` are now
+- `client/src/config/mediaZones.ts` / `server/rooms/Sora.ts`: ids `hall`/`annexHall` are now
   `workspace`/`annexWorkspace` everywhere (zone bounds, door-zone map, lock logic, UI copy in
   `Sidebar.tsx`). Don't reintroduce the old id — nothing reads it anymore.
 - `findZoneAt(x, y)` (exported from `mediaZones.ts`) is the single shared helper for "which zone
@@ -91,7 +91,7 @@ then ask the user what's next rather than assuming.
 
 - Since the annex duplicates the main map's `Computer`/`Whiteboard` object layers, ids are
   `main-0`, `main-1`, ..., `annex-0`, ... (both `Game.ts`'s `loadMapContent(map, offset,
-  mapPrefix)` and `server/rooms/SkyOffice.ts`'s `onCreate`, which now creates 10 computers + 6
+  mapPrefix)` and `server/rooms/Sora.ts`'s `onCreate`, which now creates 10 computers + 6
   whiteboards total, not 5 + 3). Without the prefix, two physically different desks in different
   maps would resolve to the same server-side Computer entry and incorrectly share screen-share
   state.

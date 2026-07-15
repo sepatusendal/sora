@@ -1,6 +1,6 @@
 /**
  * Media zone definitions (pixel rects on the tilemap, 32px tiles).
- * The `id` values MUST match MEDIA_ZONES in server/rooms/SkyOffice.ts.
+ * The `id` values MUST match MEDIA_ZONES in server/rooms/Sora.ts.
  *
  * Zones were derived from the Ground layer collision map:
  * - lounge:    top-left room          (tiles x 6-18, y 6-10)

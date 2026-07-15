@@ -12,5 +12,6 @@ export default function Video({ srcObject, ...props }: PropsType) {
     refVideo.current.srcObject = srcObject
   }, [srcObject])
 
+  // eslint-disable-next-line jsx-a11y/media-has-caption -- live WebRTC peer video, no caption track exists
   return <video ref={refVideo} {...props} />
 }

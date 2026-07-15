@@ -5,11 +5,18 @@
     "module": "commonjs",
     "strict": true,
     "allowJs": true,
-    "strictNullChecks": false,
+    "strictNullChecks": true,
     "esModuleInterop": true,
     "experimentalDecorators": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    // without this, tsc auto-includes every @types/* package found anywhere
+    // in node_modules (including ones nested inside unrelated transitive
+    // deps, e.g. colyseus's optional redis-presence pulling in its own
+    // pinned @types/node) — restricting to what's actually imported avoids
+    // an unrelated dependency's types breaking this build
+    "types": ["node", "express", "cors", "bcrypt"]
   },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["**/__tests__/**", "**/*.test.ts"]
 }

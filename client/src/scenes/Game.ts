@@ -243,7 +243,7 @@ export default class Game extends Phaser.Scene {
     // per-map ('main-0', 'annex-0', ...) because the annex is now a full
     // duplicate of the main map's Computer layer — without the prefix,
     // annex computer 0 and main computer 0 would resolve to the exact same
-    // server-side Computer entry (see SkyOffice.ts) and incorrectly share
+    // server-side Computer entry (see Sora.ts) and incorrectly share
     // screen-share state across two physically different desks.
     const computers = this.physics.add.staticGroup({ classType: Computer })
     map.getObjectLayer('Computer')!.objects.forEach((obj, i) => {

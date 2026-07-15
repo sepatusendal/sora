@@ -64,6 +64,7 @@ export const CreateRoomForm = () => {
         autoFocus
         error={nameFieldEmpty}
         helperText={nameFieldEmpty && 'Name is required'}
+        inputProps={{ maxLength: 30 }}
         onChange={handleChange('name')}
       />
 
@@ -75,6 +76,7 @@ export const CreateRoomForm = () => {
         helperText={descriptionFieldEmpty && 'Description is required'}
         multiline
         rows={4}
+        inputProps={{ maxLength: 100 }}
         onChange={handleChange('description')}
       />
 

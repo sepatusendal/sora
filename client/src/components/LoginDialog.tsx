@@ -205,6 +205,7 @@ export default function LoginDialog() {
             color="secondary"
             error={nameFieldEmpty}
             helperText={nameFieldEmpty && 'Name is required'}
+            inputProps={{ maxLength: 16 }}
             onInput={(e) => {
               setName((e.target as HTMLInputElement).value)
             }}

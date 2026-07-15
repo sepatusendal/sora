@@ -8,13 +8,15 @@ type Payload = {
   content: string
 }
 
+export const MAX_CHAT_MESSAGE_LENGTH = 500
+
 export default class ChatMessageUpdateCommand extends Command<IOfficeState, Payload> {
   execute(data: Payload) {
     const { client, content } = data
     const player = this.room.state.players.get(client.sessionId)
     const chatMessages = this.room.state.chatMessages
 
-    if (!chatMessages) return
+    if (!player || !chatMessages) return
 
     /**
      * Only allow server to store a maximum of 100 chat messages:
@@ -24,7 +26,7 @@ export default class ChatMessageUpdateCommand extends Command<IOfficeState, Payl
 
     const newMessage = new ChatMessage()
     newMessage.author = player.name
-    newMessage.content = content
+    newMessage.content = content.slice(0, MAX_CHAT_MESSAGE_LENGTH)
     chatMessages.push(newMessage)
   }
 }

@@ -211,6 +211,7 @@ export default function HelperButtonGroup() {
             size="small"
             href="https://github.com/sepatusendal/meta-sora"
             target="_blank"
+            rel="noopener noreferrer"
           >
             <GitHubIcon />
           </StyledFab>
@@ -220,6 +221,7 @@ export default function HelperButtonGroup() {
             size="small"
             href="https://www.instagram.com/wirarajaofficial"
             target="_blank"
+            rel="noopener noreferrer"
           >
             <InstagramIcon />
           </StyledFab>

@@ -15,7 +15,9 @@ import {
   WhiteboardAddUserCommand,
   WhiteboardRemoveUserCommand,
 } from './commands/WhiteboardUpdateArrayCommand'
-import ChatMessageUpdateCommand from './commands/ChatMessageUpdateCommand'
+import ChatMessageUpdateCommand, {
+  MAX_CHAT_MESSAGE_LENGTH,
+} from './commands/ChatMessageUpdateCommand'
 
 // media zones available in every office room
 // ids must match client/src/config/mediaZones.ts
@@ -54,19 +56,81 @@ const ZONE_BOUNDS: { [id: string]: { x: number; y: number; width: number; height
 // spaces; the lounge and workspace stay open to everyone.
 const LOCKABLE_ZONE_IDS = new Set(['studio', 'ceo', 'annexStudio', 'annexCeo'])
 
+// world extent covering both maps side by side — mirrors main map (40x30
+// tiles = 1280x960px) plus the annex at ANNEX_WORLD_OFFSET
+// (client/src/config/portals.ts). Anything outside this is not a real tile.
+const WORLD_BOUNDS = { minX: 0, minY: 0, maxX: 2560, maxY: 960 }
+
+// must match the `speed` constant in client/src/characters/MyPlayer.ts —
+// used to bound how far a player could plausibly move between two updates
+const PLAYER_SPEED = 200 // px/s
+// generous margin for network jitter/frame-rate variance, not a tight
+// simulation — this is a sanity check against teleport/speed-hacking, not
+// full server-side physics
+const SPEED_TOLERANCE_MULTIPLIER = 3
+const MIN_TICK_SECONDS = 1 / 30
+const MAX_TICK_SECONDS = 2
+
+// portal destinations (client/src/config/portals.ts) are legitimate instant
+// jumps and would otherwise fail the distance-per-tick check above
+const PORTAL_TARGETS = [
+  { x: 6 * 32 + 1280, y: 12 * 32 }, // to-annex target
+  { x: 21 * 32, y: 27 * 32 }, // to-main target
+]
+const PORTAL_TARGET_TOLERANCE = 4
+
 // how often (ms) the server sweeps locked zones for an auto-unlock safety net
 const LOCK_SWEEP_INTERVAL = 5000
 
-export class SkyOffice extends Room<OfficeState> {
+const MAX_ROOM_NAME_LENGTH = 30
+const MAX_ROOM_DESCRIPTION_LENGTH = 100
+
+// how long an unexpectedly-dropped client (wifi hiccup, refresh, tab
+// backgrounding) has to reconnect before their state is torn down
+const RECONNECTION_GRACE_SECONDS = 20
+
+// simple per-client sliding-window limiter — nothing in this codebase capped
+// how often a client could send any given message type, so a raw socket
+// client could flood any handler (chat spam, lock/unlock thrashing, etc.)
+class RateLimiter {
+  private hits = new Map<string, number[]>()
+
+  constructor(private limit: number, private windowMs: number) {}
+
+  allow(key: string): boolean {
+    const now = Date.now()
+    const recent = (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs)
+    recent.push(now)
+    this.hits.set(key, recent)
+    return recent.length <= this.limit
+  }
+
+  clear(key: string): void {
+    this.hits.delete(key)
+  }
+}
+
+// Sora's Colyseus room — renamed from the original SkyOffice fork this project is built on
+// (credit: Kuan-Hsuan Shen / github.com/kevinshen56714/SkyOffice, see readme.md License section)
+export class Sora extends Room<OfficeState> {
+  maxClients = 50
+
   private dispatcher = new Dispatcher(this)
-  private name: string
-  private description: string
+  private name = ''
+  private description = ''
   private password: string | null = null
+  // movement is broadcast every frame by design, so it gets a much higher
+  // budget than one-off actions (chat, lock/unlock, media control, etc.)
+  private movementLimiter = new RateLimiter(40, 1000)
+  private actionLimiter = new RateLimiter(15, 1000)
+  // last accepted UPDATE_PLAYER timestamp per client, used to bound how far
+  // a single move can plausibly travel (see validateMovement)
+  private lastMoveAt = new Map<string, number>()
 
   async onCreate(options: IRoomData) {
     const { name, description, password, autoDispose } = options
-    this.name = name
-    this.description = description
+    this.name = name.slice(0, MAX_ROOM_NAME_LENGTH)
+    this.description = description.slice(0, MAX_ROOM_DESCRIPTION_LENGTH)
     this.autoDispose = autoDispose
 
     let hasPassword = false
@@ -116,6 +180,7 @@ export class SkyOffice extends Room<OfficeState> {
      *   locked forever if everyone disconnects/walks away.
      */
     this.onMessage(Message.LOCK_ZONE, (client, message: { zoneId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const zoneId = message?.zoneId
       const zone = this.state.mediaZones.get(zoneId)
       if (!zone || !LOCKABLE_ZONE_IDS.has(zoneId) || zone.locked) return
@@ -130,6 +195,7 @@ export class SkyOffice extends Room<OfficeState> {
     })
 
     this.onMessage(Message.UNLOCK_ZONE, (client, message: { zoneId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const zoneId = message?.zoneId
       const zone = this.state.mediaZones.get(zoneId)
       if (!zone || !zone.locked) return
@@ -165,6 +231,7 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player connect to a computer, add to the computer connectedUser array
     this.onMessage(Message.CONNECT_TO_COMPUTER, (client, message: { computerId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       this.dispatcher.dispatch(new ComputerAddUserCommand(), {
         client,
         computerId: message.computerId,
@@ -173,6 +240,7 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player disconnect from a computer, remove from the computer connectedUser array
     this.onMessage(Message.DISCONNECT_FROM_COMPUTER, (client, message: { computerId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       this.dispatcher.dispatch(new ComputerRemoveUserCommand(), {
         client,
         computerId: message.computerId,
@@ -181,7 +249,9 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player stop sharing screen
     this.onMessage(Message.STOP_SCREEN_SHARE, (client, message: { computerId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const computer = this.state.computers.get(message.computerId)
+      if (!computer) return
       computer.connectedUser.forEach((id) => {
         this.clients.forEach((cli) => {
           if (cli.sessionId === id && cli.sessionId !== client.sessionId) {
@@ -193,6 +263,7 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player connect to a whiteboard, add to the whiteboard connectedUser array
     this.onMessage(Message.CONNECT_TO_WHITEBOARD, (client, message: { whiteboardId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       this.dispatcher.dispatch(new WhiteboardAddUserCommand(), {
         client,
         whiteboardId: message.whiteboardId,
@@ -203,6 +274,7 @@ export class SkyOffice extends Room<OfficeState> {
     this.onMessage(
       Message.DISCONNECT_FROM_WHITEBOARD,
       (client, message: { whiteboardId: string }) => {
+        if (!this.actionLimiter.allow(client.sessionId)) return
         this.dispatcher.dispatch(new WhiteboardRemoveUserCommand(), {
           client,
           whiteboardId: message.whiteboardId,
@@ -221,10 +293,12 @@ export class SkyOffice extends Room<OfficeState> {
     this.onMessage(
       Message.MEDIA_SET,
       (client, message: { zoneId: string; mediaType: string; mediaId: string }) => {
+        if (!this.actionLimiter.allow(client.sessionId)) return
         const zone = this.state.mediaZones.get(message.zoneId)
         if (!zone) return
-        if (message.mediaType !== 'youtube' && message.mediaType !== 'spotify') return
         const player = this.state.players.get(client.sessionId)
+        if (!player || !this.isPlayerInZone(player, message.zoneId)) return
+        if (message.mediaType !== 'youtube' && message.mediaType !== 'spotify') return
         zone.mediaType = message.mediaType
         zone.mediaId = message.mediaId
         zone.isPlaying = true
@@ -235,8 +309,11 @@ export class SkyOffice extends Room<OfficeState> {
     )
 
     this.onMessage(Message.MEDIA_PLAY, (client, message: { zoneId: string; time?: number }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const zone = this.state.mediaZones.get(message.zoneId)
       if (!zone || !zone.mediaId) return
+      const player = this.state.players.get(client.sessionId)
+      if (!player || !this.isPlayerInZone(player, message.zoneId)) return
       if (typeof message.time === 'number' && message.time >= 0) {
         zone.playbackTime = message.time
       }
@@ -245,8 +322,11 @@ export class SkyOffice extends Room<OfficeState> {
     })
 
     this.onMessage(Message.MEDIA_PAUSE, (client, message: { zoneId: string; time?: number }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const zone = this.state.mediaZones.get(message.zoneId)
       if (!zone || !zone.mediaId) return
+      const player = this.state.players.get(client.sessionId)
+      if (!player || !this.isPlayerInZone(player, message.zoneId)) return
       if (typeof message.time === 'number' && message.time >= 0) {
         // trust the pausing client's actual playhead for accuracy
         zone.playbackTime = message.time
@@ -258,16 +338,22 @@ export class SkyOffice extends Room<OfficeState> {
     })
 
     this.onMessage(Message.MEDIA_SEEK, (client, message: { zoneId: string; time: number }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const zone = this.state.mediaZones.get(message.zoneId)
       if (!zone || !zone.mediaId) return
+      const player = this.state.players.get(client.sessionId)
+      if (!player || !this.isPlayerInZone(player, message.zoneId)) return
       if (typeof message.time !== 'number' || message.time < 0) return
       zone.playbackTime = message.time
       zone.updatedAt = Date.now()
     })
 
     this.onMessage(Message.MEDIA_STOP, (client, message: { zoneId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       const zone = this.state.mediaZones.get(message.zoneId)
       if (!zone) return
+      const player = this.state.players.get(client.sessionId)
+      if (!player || !this.isPlayerInZone(player, message.zoneId)) return
       zone.mediaType = ''
       zone.mediaId = ''
       zone.isPlaying = false
@@ -280,6 +366,11 @@ export class SkyOffice extends Room<OfficeState> {
     this.onMessage(
       Message.UPDATE_PLAYER,
       (client, message: { x: number; y: number; anim: string }) => {
+        if (!this.movementLimiter.allow(client.sessionId)) return
+        const player = this.state.players.get(client.sessionId)
+        if (!player) return
+        if (!this.validateMovement(client.sessionId, player, message.x, message.y)) return
+
         this.dispatcher.dispatch(new PlayerUpdateCommand(), {
           client,
           x: message.x,
@@ -291,6 +382,7 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when receiving updatePlayerName message, call the PlayerUpdateNameCommand
     this.onMessage(Message.UPDATE_PLAYER_NAME, (client, message: { name: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       this.dispatcher.dispatch(new PlayerUpdateNameCommand(), {
         client,
         name: message.name,
@@ -311,6 +403,7 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player disconnect a stream, broadcast the signal to the other player connected to the stream
     this.onMessage(Message.DISCONNECT_STREAM, (client, message: { clientId: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
       this.clients.forEach((cli) => {
         if (cli.sessionId === message.clientId) {
           cli.send(Message.DISCONNECT_STREAM, client.sessionId)
@@ -320,19 +413,54 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player send a chat message, update the message array and broadcast to all connected clients except the sender
     this.onMessage(Message.ADD_CHAT_MESSAGE, (client, message: { content: string }) => {
+      if (!this.actionLimiter.allow(client.sessionId)) return
+      const content = message.content.slice(0, MAX_CHAT_MESSAGE_LENGTH)
+
       // update the message array (so that players join later can also see the message)
       this.dispatcher.dispatch(new ChatMessageUpdateCommand(), {
         client,
-        content: message.content,
+        content,
       })
 
       // broadcast to all currently connected clients except the sender (to render in-game dialog on top of the character)
       this.broadcast(
         Message.ADD_CHAT_MESSAGE,
-        { clientId: client.sessionId, content: message.content },
+        { clientId: client.sessionId, content },
         { except: client }
       )
     })
+  }
+
+  // rejects out-of-map positions and implausible single-tick jumps (the
+  // classic "send arbitrary x/y from devtools" exploit) while still allowing
+  // legitimate portal teleports and normal lag/frame-rate variance. This is a
+  // sanity bound, not full collision — walls/doors still aren't enforced.
+  private validateMovement(sessionId: string, player: Player, x: number, y: number): boolean {
+    if (x < WORLD_BOUNDS.minX || x > WORLD_BOUNDS.maxX) return false
+    if (y < WORLD_BOUNDS.minY || y > WORLD_BOUNDS.maxY) return false
+
+    const now = Date.now()
+    const lastAt = this.lastMoveAt.get(sessionId) ?? now
+    const elapsedSeconds = Math.min(
+      Math.max((now - lastAt) / 1000, MIN_TICK_SECONDS),
+      MAX_TICK_SECONDS
+    )
+    const maxDistance = PLAYER_SPEED * elapsedSeconds * SPEED_TOLERANCE_MULTIPLIER
+
+    const dx = x - player.x
+    const dy = y - player.y
+    const distance = Math.sqrt(dx * dx + dy * dy)
+
+    const isPortalJump = PORTAL_TARGETS.some(
+      (target) =>
+        Math.abs(x - target.x) <= PORTAL_TARGET_TOLERANCE &&
+        Math.abs(y - target.y) <= PORTAL_TARGET_TOLERANCE
+    )
+
+    if (distance > maxDistance && !isPortalJump) return false
+
+    this.lastMoveAt.set(sessionId, now)
+    return true
   }
 
   private isPlayerInZone(player: Player, zoneId: string): boolean {
@@ -348,7 +476,7 @@ export class SkyOffice extends Room<OfficeState> {
 
   async onAuth(client: Client, options: { password: string | null }) {
     if (this.password) {
-      const validPassword = await bcrypt.compare(options.password, this.password)
+      const validPassword = await bcrypt.compare(options.password ?? '', this.password)
       if (!validPassword) {
         throw new ServerError(403, 'Password is incorrect!')
       }
@@ -365,7 +493,25 @@ export class SkyOffice extends Room<OfficeState> {
     })
   }
 
-  onLeave(client: Client) {
+  async onLeave(client: Client, consented: boolean) {
+    // a graceful leave (room.leave() called explicitly) skips the grace
+    // window; an unexpected drop (wifi hiccup, tab refresh, backgrounding)
+    // gets RECONNECTION_GRACE_SECONDS to reconnect before state is torn down
+    if (!consented) {
+      try {
+        await this.allowReconnection(client, RECONNECTION_GRACE_SECONDS)
+        return // client reconnected in time — nothing to clean up
+      } catch (e) {
+        // grace period expired without a reconnect, fall through to cleanup
+      }
+    }
+    this.cleanupPlayer(client)
+  }
+
+  private cleanupPlayer(client: Client) {
+    this.movementLimiter.clear(client.sessionId)
+    this.actionLimiter.clear(client.sessionId)
+    this.lastMoveAt.delete(client.sessionId)
     if (this.state.players.has(client.sessionId)) {
       this.state.players.delete(client.sessionId)
     }

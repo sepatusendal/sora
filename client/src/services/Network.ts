@@ -105,6 +105,49 @@ export default class Network {
     store.dispatch(setSessionId(this.room.sessionId))
     this.webRTC = new WebRTC(this.mySessionId, this)
 
+    this.registerRoomListeners()
+    this.setupReconnection()
+  }
+
+  /**
+   * Attempts to resume the same session after an unexpected drop (wifi
+   * hiccup, tab backgrounding, brief server hiccup) instead of leaving the
+   * player permanently disconnected — mirrors the grace window the server
+   * grants via allowReconnection() in Sora.ts's onLeave.
+   */
+  private setupReconnection() {
+    if (!this.room) return
+    const roomId = this.room.id
+    const sessionId = this.room.sessionId
+
+    this.room.onLeave((code) => {
+      // 1000 = normal/consented closure (explicit leave); anything else is
+      // an unexpected drop worth trying to recover from
+      if (code === 1000) return
+      this.attemptReconnect(roomId, sessionId)
+    })
+  }
+
+  private async attemptReconnect(roomId: string, sessionId: string) {
+    try {
+      this.room = await this.client.reconnect<IOfficeState>(roomId, sessionId)
+      this.mySessionId = this.room.sessionId
+      store.dispatch(setSessionId(this.room.sessionId))
+      this.registerRoomListeners()
+      this.setupReconnection()
+    } catch (e) {
+      // reconnection window expired (see RECONNECTION_GRACE_SECONDS
+      // server-side) or the room is gone — nothing more to do automatically
+      console.warn('[Network] reconnection failed', e)
+    }
+  }
+
+  // (re-)binds all room state/message listeners — used on first join and
+  // again after a successful reconnect, since reconnect() returns a new
+  // Room instance whose listeners start empty
+  private registerRoomListeners() {
+    if (!this.room) return
+
     // new instance added to the players MapSchema
     this.room.state.players.onAdd = (player: IPlayer, key: string) => {
       if (key === this.mySessionId) return

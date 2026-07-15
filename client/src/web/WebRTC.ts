@@ -174,6 +174,7 @@ export default class WebRTC {
     audioButton.addEventListener('click', () => {
       if (this.myStream) {
         const audioTrack = this.myStream.getAudioTracks()[0]
+        if (!audioTrack) return
         if (audioTrack.enabled) {
           audioTrack.enabled = false
           audioButton.innerText = 'Unmute'
@@ -187,12 +188,13 @@ export default class WebRTC {
     videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
       if (this.myStream) {
-        const audioTrack = this.myStream.getVideoTracks()[0]
-        if (audioTrack.enabled) {
-          audioTrack.enabled = false
+        const videoTrack = this.myStream.getVideoTracks()[0]
+        if (!videoTrack) return
+        if (videoTrack.enabled) {
+          videoTrack.enabled = false
           videoButton.innerText = 'Video on'
         } else {
-          audioTrack.enabled = true
+          videoTrack.enabled = true
           videoButton.innerText = 'Video off'
         }
       }
