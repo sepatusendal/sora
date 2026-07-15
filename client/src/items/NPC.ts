@@ -31,6 +31,11 @@ const STUCK_MIN_MOVE_PX = 6
 const TYPE_CHAR_DELAY_MS = 45
 const TYPE_HOLD_MS = 2200
 
+// gold accent (matches the game's existing UI accent color) so an NPC's
+// floating name tag reads as visually distinct from a real player's
+// (black, see Player.ts's playerName) at a glance
+const NAME_LABEL_COLOR = '#ffd23f'
+
 const GREET_RADIUS = 90
 // hysteresis gap so a lingering player doesn't get re-greeted just for
 // standing a couple pixels back and forth across one threshold
@@ -115,6 +120,11 @@ export default class NPC extends Item {
   private typeTimer?: Phaser.Time.TimerEvent
   private clearSayTimer?: Phaser.Time.TimerEvent
 
+  // name tag always floating above the sprite's head, in a different color
+  // than real players' (black, see Player.ts) so an NPC reads as an NPC at
+  // a glance even from a distance, before ever pressing R to interact
+  private nameLabel!: Phaser.GameObjects.Text
+
   onOverlapDialog() {
     this.setDialogBox(`Tekan R untuk ngobrol sama ${this.role}`)
   }
@@ -136,6 +146,14 @@ export default class NPC extends Item {
       this.setWanderTarget(config.patrol.b.x, config.patrol.b.y)
     }
     this.play(`${this.texture.key}_idle_down`, true)
+
+    this.nameLabel = this.scene.add
+      .text(this.x, this.y - this.height * 0.5 - 4, this.role)
+      .setFontFamily('Arial')
+      .setFontSize(11)
+      .setColor(NAME_LABEL_COLOR)
+      .setOrigin(0.5)
+      .setDepth(9999)
   }
 
   /** Called from MyPlayer's keyR handler when a player interacts with this NPC. */
@@ -327,6 +345,7 @@ export default class NPC extends Item {
   /** Called every frame from Game.ts's main update loop (see updateNPCs). */
   update(time: number, playerX: number, playerY: number) {
     this.setDepth(this.y)
+    this.nameLabel.setPosition(this.x, this.y - this.height * 0.5 - 4)
 
     if (this.talking || this.menuOpen) return
 
