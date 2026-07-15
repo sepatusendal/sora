@@ -1,7 +1,7 @@
 {
-  "name": "meta-sora-client",
+  "name": "sora-client",
   "private": true,
-  "description": "Client for Meta Sora",
+  "description": "Client for SORA",
   "version": "1.0.0",
   "scripts": {
     "dev": "vite --host",

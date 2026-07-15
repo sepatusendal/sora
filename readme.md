@@ -1,21 +1,21 @@
-# 🌌 Meta Sora ![License](https://img.shields.io/badge/license-MIT-blue) ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-green.svg) ![Vibes](https://img.shields.io/badge/vibes-immaculate-ff69b4) ![Maintainer](https://img.shields.io/badge/maintained%20by-sepatusendal-orange)
+# 🌌 SORA ![License](https://img.shields.io/badge/license-MIT-blue) ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-green.svg) ![Vibes](https://img.shields.io/badge/vibes-immaculate-ff69b4) ![Maintainer](https://img.shields.io/badge/maintained%20by-sepatusendal-orange)
 
 <img alt="Logo" align="right" src="https://user-images.githubusercontent.com/11501902/139942585-a6b044ce-3695-460a-91bd-dd9f1d4611c8.png" width="20%" />
 
-Yo, welcome to **Meta Sora** — hands down the most extra virtual world on the block, where you can work, meet, gossip, and doodle on a whiteboard with your squad without ever putting on real pants. 👖❌
+Yo, welcome to **SORA** — hands down the most extra virtual world on the block, where you can work, meet, gossip, and doodle on a whiteboard with your squad without ever putting on real pants. 👖❌
 
 This ain't your average "boring boxes on a video call" website, bestie. This is a whole portal. A whole world. Straight up _vibes_. You walk, your little avatar walks. You get close to someone, boom, instant connection, no awkward "can you hear me?" energy. Feels like a game but somehow actual work gets done. Explain to me how that's not immersive. 🌌
 
-Meta Sora was cooked up from scratch with one mission: make a virtual workspace that actually feels alive, instead of the same tired video-call-grid nonsense everyone's sick of. A little world you can wander around in, chit-chat in, and somehow still be productive in. ✨
+SORA was cooked up from scratch with one mission: make a virtual workspace that actually feels alive, instead of the same tired video-call-grid nonsense everyone's sick of. A little world you can wander around in, chit-chat in, and somehow still be productive in. ✨
 
 - 🙌 Follow for memes & updates: [Instagram](https://www.instagram.com/wirarajaofficial)
-- 📦 Source code (feel free to fork it, just don't fork with anyone's heart): [GitHub](https://github.com/sepatusendal/meta-sora)
+- 📦 Source code (feel free to fork it, just don't fork with anyone's heart): [GitHub](https://github.com/sepatusendal/sora)
 
-> ⚠️ **Serious disclaimer (kinda):** Meta Sora currently runs buttery smooth on PC browsers only. If you open it on mobile and everything's busted, that's not a bug bestie, that's Meta Sora testing your loyalty. Get back on your laptop please. 🙏📱❌
+> ⚠️ **Serious disclaimer (kinda):** SORA currently runs buttery smooth on PC browsers only. If you open it on mobile and everything's busted, that's not a bug bestie, that's SORA testing your loyalty. Get back on your laptop please. 🙏📱❌
 
 ## 🛠️ Built with
 
-- [Phaser3](https://github.com/photonstorm/phaser) - the game engine keeping Meta Sora alive and kicking
+- [Phaser3](https://github.com/photonstorm/phaser) - the game engine keeping SORA alive and kicking
 - [Colyseus](https://github.com/colyseus/colyseus) - WebSocket server framework, so everyone connects real-time with zero loading drama
 - [React/Redux](https://github.com/facebook/react) - front-end framework, keeping things looking clean
 - [PeerJS](https://github.com/peers/peerjs) - WebRTC for video calls & screen sharing
@@ -85,26 +85,26 @@ Grab [Node.js](https://nodejs.org/en/) and [npm](https://www.npmjs.com/) first. 
 Clone this bad boy to your machine:
 
 ```bash
-git clone https://github.com/sepatusendal/meta-sora.git
+git clone https://github.com/sepatusendal/sora.git
 ```
 
-This makes a folder called `meta-sora`. Want a different name? Toss it at the end:
+This makes a folder called `sora`. Want a different name? Toss it at the end:
 
 ```bash
-git clone https://github.com/sepatusendal/meta-sora.git your-folder-name
+git clone https://github.com/sepatusendal/sora.git your-folder-name
 ```
 
 **Run the server:**
 
 ```bash
-cd meta-sora  # or 'your-folder-name'
+cd sora  # or 'your-folder-name'
 yarn && yarn start
 ```
 
 **Run the client:**
 
 ```bash
-cd meta-sora/client  # or 'your-folder-name/client'
+cd sora/client  # or 'your-folder-name/client'
 yarn && yarn dev
 ```
 
@@ -112,7 +112,7 @@ Once both are running, pop open your browser and boom, congrats, you now officia
 
 ## 🎉 Credits
 
-Yo, it's me, **Wira** — you probably know me as **sepatusendal**. I built and grew Meta Sora into what it is today. If you vibe with this project, go follow me for more chaotic content. If you don't, still go follow, no hard feelings, I'll wear you down eventually. 😎
+Yo, it's me, **Wira** — you probably know me as **sepatusendal**. I built and grew SORA into what it is today. If you vibe with this project, go follow me for more chaotic content. If you don't, still go follow, no hard feelings, I'll wear you down eventually. 😎
 
 Big thanks also to:
 
@@ -121,4 +121,4 @@ Big thanks also to:
 
 ## 📜 License
 
-This project is licensed under MIT, originally created by [Kuan-Hsuan Shen](https://github.com/kevinshen56714) through the original [SkyOffice](https://github.com/kevinshen56714/SkyOffice) project. Meta Sora is a continuation of his work — respect to the one who started it all. 🙏 Check the [LICENSE](./LICENSE) file for the full details.
+This project is licensed under MIT, originally created by [Kuan-Hsuan Shen](https://github.com/kevinshen56714) through the original [SkyOffice](https://github.com/kevinshen56714/SkyOffice) project. SORA is a continuation of his work — respect to the one who started it all. 🙏 Check the [LICENSE](./LICENSE) file for the full details.

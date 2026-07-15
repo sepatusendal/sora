@@ -121,7 +121,7 @@ export default function Sidebar() {
 
       <Container $open={open}>
         <SidebarHeader>
-          <h2>Meta Sora</h2>
+          <h2>SORA</h2>
           <Clock>{clock} WIB</Clock>
         </SidebarHeader>
 
@@ -305,7 +305,7 @@ export default function Sidebar() {
               {backgroundMode === BackgroundMode.DAY ? <DarkModeIcon /> : <LightModeIcon />}
             </IconButton>
           </Tooltip>
-          <FooterText>Meta Sora · Wiraraja Inovasi</FooterText>
+          <FooterText>SORA · Wiraraja Inovasi</FooterText>
         </SidebarFooter>
       </Container>
     </>

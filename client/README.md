@@ -1,6 +1,6 @@
 # Getting Started with Vite
 
-Meta Sora's client side was bootstrapped with [Vite](https://vitejs.dev/).
+SORA's client side was bootstrapped with [Vite](https://vitejs.dev/).
 
 ## Available Scripts
 
