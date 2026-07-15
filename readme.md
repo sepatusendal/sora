@@ -1,6 +1,6 @@
 # 🌌 Meta Sora ![License](https://img.shields.io/badge/license-MIT-blue) ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-green.svg) ![Vibes](https://img.shields.io/badge/vibes-immaculate-ff69b4) ![Maintainer](https://img.shields.io/badge/maintained%20by-sepatusendal-orange)
 
-<img alt="Logo" align="right" src="https://user-images.githubusercontent.com/11501902/139942585-a6b044ce-3695-460a-91bd-dd9f1d4611c8.png" width="20%" />
+<img alt="Logo" align="right" src="https://i.ibb.co.com/21BNRkZZ/Chat-GPT-Image-Jul-14-2026-10-38-53-PM.png" width="20%" />
 
 Welcome to **Meta Sora** — the most extra virtual world out there, where you can work, meet, gossip, and doodle on a whiteboard with your friends without ever putting on real pants. 👖❌
 
