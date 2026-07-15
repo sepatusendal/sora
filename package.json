@@ -1,7 +1,7 @@
 {
-  "name": "meta-sora",
+  "name": "sora",
   "version": "1.0.0",
-  "description": "Server for Meta Sora",
+  "description": "Server for SORA",
   "main": ".eslintrc.js",
   "scripts": {
     "start": "cd server && ts-node-dev --project tsconfig.server.json --respawn --transpile-only index.ts",
@@ -10,15 +10,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sepatusendal/meta-sora.git"
+    "url": "git+https://github.com/sepatusendal/sora.git"
   },
   "keywords": [],
   "author": "wirarajaofficial",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/sepatusendal/meta-sora/issues"
+    "url": "https://github.com/sepatusendal/sora/issues"
   },
-  "homepage": "https://github.com/sepatusendal/meta-sora#readme",
+  "homepage": "https://github.com/sepatusendal/sora#readme",
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^4.33.0",
     "@typescript-eslint/parser": "^4.33.0",

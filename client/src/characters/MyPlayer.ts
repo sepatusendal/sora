@@ -8,6 +8,7 @@ import Chair from '../items/Chair'
 import Computer from '../items/Computer'
 import Whiteboard from '../items/Whiteboard'
 import Portal from '../items/Portal'
+import NPC from '../items/NPC'
 
 import { phaserEvents, Event } from '../events/EventCenter'
 import store from '../stores'
@@ -74,7 +75,7 @@ export default class MyPlayer extends Player {
         }
         case ItemType.VENDINGMACHINE: {
           // hacky and hard-coded, but leaving it as is for now
-          const url = 'https://github.com/sepatusendal/meta-sora'
+          const url = 'https://github.com/sepatusendal/sora'
           openURL(url)
           break
         }
@@ -91,6 +92,11 @@ export default class MyPlayer extends Player {
           portal.clearDialogBox()
           playerSelector.selectedItem = undefined
           network.updatePlayer(portal.targetX, portal.targetY, this.anims.currentAnim!.key)
+          break
+        }
+        case ItemType.NPC: {
+          const npc = item as NPC
+          npc.talk()
           break
         }
       }

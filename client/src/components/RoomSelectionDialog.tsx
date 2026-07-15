@@ -1,14 +1,12 @@
 import React, { useState } from 'react'
 import logo from '../images/logo.png'
-import styled from 'styled-components'
-import Button from '@mui/material/Button'
+import styled, { keyframes } from 'styled-components'
 import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
 import LinearProgress from '@mui/material/LinearProgress'
 import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 
 import { CustomRoomTable } from './CustomRoomTable'
 import { CreateRoomForm } from './CreateRoomForm'
@@ -17,22 +15,90 @@ import { useAppSelector } from '../hooks'
 import phaserGame from '../PhaserGame'
 import Bootstrap from '../scenes/Bootstrap'
 
+const PIXEL_FONT = "'Press Start 2P', monospace"
+
+// arcade-cabinet palette: black cabinet, yellow trim, red action button
+const COLOR_BLACK = '#0d0a05'
+const COLOR_YELLOW = '#ffd23f'
+const COLOR_YELLOW_DIM = '#8a6d1a'
+const COLOR_RED = '#d7263d'
+const COLOR_RED_DARK = '#7a121f'
+
+const float = keyframes`
+  0%, 100% { transform: translate(-50%, 0); }
+  50% { transform: translate(-50%, -12px); }
+`
+
+const glow = keyframes`
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(255, 210, 63, 0.4)); }
+  50% { filter: drop-shadow(0 0 22px rgba(255, 210, 63, 0.9)); }
+`
+
+const blink = keyframes`
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+`
+
+const boxPulse = keyframes`
+  0%, 100% {
+    box-shadow: inset -6px -6px 0 0 #000, inset 6px 6px 0 0 ${COLOR_YELLOW_DIM},
+      0 0 0 5px ${COLOR_YELLOW}, 0 0 0 9px #000;
+  }
+  50% {
+    box-shadow: inset -6px -6px 0 0 #000, inset 6px 6px 0 0 ${COLOR_YELLOW_DIM},
+      0 0 0 5px #fff2b0, 0 0 0 9px #000;
+  }
+`
+
+const boxBreathe = keyframes`
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.012); }
+`
+
+const arrowBounce = keyframes`
+  0%, 100% { transform: translate(0, -50%); }
+  50% { transform: translate(-4px, -50%); }
+`
+
+// classic RPG-dialogue-box notch: chops a small staircase off each corner
+// instead of rounding them, which reads as "pixel" the way border-radius never does
+const pixelNotch = (size: number) => `
+  clip-path: polygon(
+    ${size}px 0, calc(100% - ${size}px) 0, 100% ${size}px, 100% calc(100% - ${size}px),
+    calc(100% - ${size}px) 100%, ${size}px 100%, 0 calc(100% - ${size}px), 0 ${size}px
+  );
+`
+
+const FloatingLogo = styled.img`
+  position: fixed;
+  z-index: 1;
+  top: 10%;
+  left: 50%;
+  transform: translate(-50%, 0);
+  width: min(52vw, 520px);
+  pointer-events: none;
+  animation: ${float} 3.6s ease-in-out infinite, ${glow} 3s ease-in-out infinite;
+`
+
 const Backdrop = styled.div`
   position: absolute;
-  top: 50%;
+  top: 68%;
   left: 50%;
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
-  gap: 60px;
+  gap: 24px;
   align-items: center;
 `
 
 const Wrapper = styled.div`
-  background: #222639;
-  border-radius: 16px;
-  padding: 36px 60px;
-  box-shadow: 0px 0px 5px #0000006f;
+  position: relative;
+  background: ${COLOR_BLACK};
+  padding: 30px 46px;
+  max-height: 70vh;
+  overflow-y: auto;
+  ${pixelNotch(12)}
+  animation: ${boxPulse} 2.4s ease-in-out infinite, ${boxBreathe} 2.4s ease-in-out infinite;
 `
 
 const CustomRoomWrapper = styled.div`
@@ -49,15 +115,10 @@ const CustomRoomWrapper = styled.div`
 `
 
 const TitleWrapper = styled.div`
+  position: relative;
   display: grid;
   width: 100%;
-
-  .back-button {
-    grid-column: 1;
-    grid-row: 1;
-    justify-self: start;
-    align-self: center;
-  }
+  padding-top: 6px;
 
   h1 {
     grid-column: 1;
@@ -68,37 +129,124 @@ const TitleWrapper = styled.div`
 `
 
 const Title = styled.h1`
-  font-size: 24px;
-  color: #eee;
+  font-family: ${PIXEL_FONT};
+  font-size: 14px;
+  line-height: 1.8;
+  color: ${COLOR_YELLOW};
   text-align: center;
+  text-shadow: 3px 3px 0 #000;
+  letter-spacing: 1px;
 `
 
 const Content = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  margin: 20px 0;
+  gap: 18px;
+  margin: 18px 0 0;
   align-items: center;
   justify-content: center;
+`
 
-  img {
-    border-radius: 8px;
-    height: 120px;
+const PixelButton = styled.button<{ $variant?: 'primary' | 'secondary' }>`
+  position: relative;
+  font-family: ${PIXEL_FONT};
+  font-size: 11px;
+  line-height: 1.7;
+  color: ${(p) => (p.$variant === 'secondary' ? COLOR_YELLOW : '#fff')};
+  background: ${(p) => (p.$variant === 'secondary' ? '#1a1408' : COLOR_RED)};
+  border: none;
+  padding: 14px 20px 14px 30px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  ${pixelNotch(8)}
+  box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.45),
+    inset 4px 4px 0 0 rgba(255, 255, 255, 0.15),
+    0 0 0 3px ${(p) => (p.$variant === 'secondary' ? COLOR_YELLOW_DIM : COLOR_RED_DARK)},
+    0 4px 0 0 #000;
+  transition: filter 0.06s ease, transform 0.06s ease, box-shadow 0.06s ease;
+
+  /* classic RPG menu cursor: a little arrow that appears + bounces beside
+     whichever option is "selected" (hovered), instead of a generic web hover */
+  &::before {
+    content: '▶';
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translate(-6px, -50%);
+    color: ${COLOR_YELLOW};
+    opacity: 0;
+    transition: opacity 0.1s ease;
   }
+
+  &:hover {
+    filter: brightness(1.2);
+    background: ${(p) => (p.$variant === 'secondary' ? '#2a2210' : '#ef3b52')};
+  }
+
+  &:hover::before {
+    opacity: 1;
+    animation: ${arrowBounce} 0.6s ease-in-out infinite;
+  }
+
+  &:active {
+    transform: translateY(4px);
+    box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.45),
+      inset 4px 4px 0 0 rgba(255, 255, 255, 0.15),
+      0 0 0 3px ${(p) => (p.$variant === 'secondary' ? COLOR_YELLOW_DIM : COLOR_RED_DARK)},
+      0 0 0 0 #000;
+  }
+`
+
+const BackButton = styled(PixelButton)`
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+
+  /* too small to fit the RPG-cursor arrow used on the bigger action buttons */
+  &::before {
+    content: none;
+  }
+`
+
+const BlinkHint = styled.p`
+  margin: -4px 0 0;
+  font-family: ${PIXEL_FONT};
+  font-size: 10px;
+  letter-spacing: 1px;
+  line-height: 1.8;
+  color: ${COLOR_YELLOW};
+  text-align: center;
+  animation: ${blink} 1.8s ease-in-out infinite;
 `
 
 const ProgressBarWrapper = styled.div`
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 8px;
 
   h3 {
-    color: #33ac96;
+    font-family: ${PIXEL_FONT};
+    font-size: 11px;
+    font-weight: normal;
+    color: ${COLOR_YELLOW};
+    text-shadow: 2px 2px 0 #000;
   }
 `
 
 const ProgressBar = styled(LinearProgress)`
-  width: 360px;
+  width: 300px;
+  height: 10px !important;
+  border-radius: 0 !important;
+  background-color: ${COLOR_BLACK} !important;
+  box-shadow: 0 0 0 3px #000, 0 0 0 4px ${COLOR_YELLOW_DIM};
+
+  .MuiLinearProgress-bar {
+    border-radius: 0 !important;
+    background-color: ${COLOR_RED} !important;
+  }
 `
 
 export default function RoomSelectionDialog() {
@@ -121,6 +269,7 @@ export default function RoomSelectionDialog() {
 
   return (
     <>
+      <FloatingLogo src={logo} alt="SORA" />
       <Snackbar
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
         open={showSnackbar}
@@ -143,9 +292,7 @@ export default function RoomSelectionDialog() {
           {showCreateRoomForm ? (
             <CustomRoomWrapper>
               <TitleWrapper>
-                <IconButton className="back-button" onClick={() => setShowCreateRoomForm(false)}>
-                  <ArrowBackIcon />
-                </IconButton>
+                <BackButton onClick={() => setShowCreateRoomForm(false)}>‹</BackButton>
                 <Title>Create Custom Room</Title>
               </TitleWrapper>
               <CreateRoomForm />
@@ -153,9 +300,7 @@ export default function RoomSelectionDialog() {
           ) : showCustomRoom ? (
             <CustomRoomWrapper>
               <TitleWrapper>
-                <IconButton className="back-button" onClick={() => setShowCustomRoom(false)}>
-                  <ArrowBackIcon />
-                </IconButton>
+                <BackButton onClick={() => setShowCustomRoom(false)}>‹</BackButton>
                 <Title>
                   Custom Rooms
                   <Tooltip
@@ -163,35 +308,26 @@ export default function RoomSelectionDialog() {
                     placement="top"
                   >
                     <IconButton>
-                      <HelpOutlineIcon className="tip" />
+                      <HelpOutlineIcon className="tip" style={{ color: COLOR_YELLOW }} />
                     </IconButton>
                   </Tooltip>
                 </Title>
               </TitleWrapper>
               <CustomRoomTable />
-              <Button
-                variant="contained"
-                color="secondary"
-                onClick={() => setShowCreateRoomForm(true)}
-              >
-                Create new room
-              </Button>
+              <PixelButton onClick={() => setShowCreateRoomForm(true)}>Create new room</PixelButton>
             </CustomRoomWrapper>
           ) : (
             <>
-              <Title>Welcome to Meta Sora</Title>
+              <Title>Welcome to SORA</Title>
               <Content>
-                <img src={logo} alt="logo" />
-                <Button variant="contained" color="secondary" onClick={handleConnect}>
-                  Connect to public lobby
-                </Button>
-                <Button
-                  variant="outlined"
-                  color="secondary"
+                <PixelButton onClick={handleConnect}>Connect to public lobby</PixelButton>
+                <PixelButton
+                  $variant="secondary"
                   onClick={() => (lobbyJoined ? setShowCustomRoom(true) : setShowSnackbar(true))}
                 >
                   Create/find custom rooms
-                </Button>
+                </PixelButton>
+                <BlinkHint>build by sepatusendal</BlinkHint>
               </Content>
             </>
           )}

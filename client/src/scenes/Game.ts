@@ -10,6 +10,7 @@ import Whiteboard from '../items/Whiteboard'
 import VendingMachine from '../items/VendingMachine'
 import Door, { createDoorTextures } from '../items/Door'
 import Portal, { createPortalTexture } from '../items/Portal'
+import NPC from '../items/NPC'
 import '../characters/MyPlayer'
 import '../characters/OtherPlayer'
 import MyPlayer from '../characters/MyPlayer'
@@ -28,6 +29,7 @@ import { phaserEvents, Event } from '../events/EventCenter'
 import { mediaZoneConfigs, MediaZoneConfig, findZoneAt } from '../config/mediaZones'
 import { doorConfigs, DOOR_OPEN_DISTANCE, DOOR_CLOSE_DISTANCE, DOOR_ZONE_MAP } from '../config/doors'
 import { portalConfigs, ANNEX_WORLD_OFFSET } from '../config/portals'
+import { npcConfigs } from '../config/npcs'
 
 const MAIN_OFFSET = { x: 0, y: 0 }
 
@@ -36,6 +38,10 @@ interface MapObjectGroups {
   computers: Phaser.Physics.Arcade.StaticGroup
   whiteboards: Phaser.Physics.Arcade.StaticGroup
   vendingMachines: Phaser.Physics.Arcade.StaticGroup
+  // solid (collidable) Tiled object-layer groups for this map — kept around
+  // so addNPCs can collide roaming NPCs against the same furniture/walls
+  // the player already collides with (see addGroupFromTiled)
+  collidables: Phaser.Physics.Arcade.StaticGroup[]
 }
 
 export default class Game extends Phaser.Scene {
@@ -43,6 +49,8 @@ export default class Game extends Phaser.Scene {
   private cursors!: NavKeys
   private keyE!: Phaser.Input.Keyboard.Key
   private keyR!: Phaser.Input.Keyboard.Key
+  // number keys — used to pick an NPC conversation topic from its menu (see NPC.ts)
+  private topicKeys!: Phaser.Input.Keyboard.Key[]
   private map!: Phaser.Tilemaps.Tilemap
   private annexMap!: Phaser.Tilemaps.Tilemap
   myPlayer!: MyPlayer
@@ -53,6 +61,7 @@ export default class Game extends Phaser.Scene {
   private whiteboardMap = new Map<string, Whiteboard>()
   private doors: Door[] = []
   private portals!: Phaser.Physics.Arcade.StaticGroup
+  private npcs: NPC[] = []
   private currentMediaZoneId: string | null = null
   private lastMediaDistanceEmit = 0
   private mediaZoneLabels = new Map<string, Phaser.GameObjects.Text>()
@@ -71,6 +80,11 @@ export default class Game extends Phaser.Scene {
     // maybe we can have a dedicated method for adding keys if more keys are needed in the future
     this.keyE = this.input.keyboard!.addKey('E')
     this.keyR = this.input.keyboard!.addKey('R')
+    this.topicKeys = [
+      this.input.keyboard!.addKey('ONE'),
+      this.input.keyboard!.addKey('TWO'),
+      this.input.keyboard!.addKey('THREE'),
+    ]
     this.input.keyboard!.disableGlobalCapture()
     this.input.keyboard!.on('keydown-ENTER', () => {
       store.dispatch(setShowChat(true))
@@ -149,6 +163,9 @@ export default class Game extends Phaser.Scene {
     // teleport points to/from the annex
     this.addPortals()
 
+    // roaming decorative NPCs (OB, Satpam, Receptionist) — main office only
+    const npcGroup = this.addNPCs(groundLayer, mainObjects, this.doors)
+
     // media zone floor labels (subtle, in-world hint of where shared media plays)
     this.addMediaZoneLabels()
 
@@ -174,6 +191,16 @@ export default class Game extends Phaser.Scene {
         annexObjects.vendingMachines,
         this.portals,
       ],
+      this.handleItemSelectorOverlap,
+      undefined,
+      this
+    )
+    // separate call: npcGroup is a dynamic Group (NPCs move), which can't
+    // share a mixed-type array with the StaticGroups above — Phaser's
+    // ArcadeColliderType only allows homogeneous arrays
+    this.physics.add.overlap(
+      this.playerSelector,
+      npcGroup,
       this.handleItemSelectorOverlap,
       undefined,
       this
@@ -288,12 +315,32 @@ export default class Game extends Phaser.Scene {
     // import other objects from Tiled map to Phaser
     this.addGroupFromTiled(map, offset, 'Wall', 'tiles_wall', 'FloorAndGround', false)
     this.addGroupFromTiled(map, offset, 'Objects', 'office', 'Modern_Office_Black_Shadow', false)
-    this.addGroupFromTiled(map, offset, 'ObjectsOnCollide', 'office', 'Modern_Office_Black_Shadow', true)
+    const objectsOnCollide = this.addGroupFromTiled(
+      map,
+      offset,
+      'ObjectsOnCollide',
+      'office',
+      'Modern_Office_Black_Shadow',
+      true
+    )
     this.addGroupFromTiled(map, offset, 'GenericObjects', 'generic', 'Generic', false)
-    this.addGroupFromTiled(map, offset, 'GenericObjectsOnCollide', 'generic', 'Generic', true)
-    this.addGroupFromTiled(map, offset, 'Basement', 'basement', 'Basement', true)
+    const genericObjectsOnCollide = this.addGroupFromTiled(
+      map,
+      offset,
+      'GenericObjectsOnCollide',
+      'generic',
+      'Generic',
+      true
+    )
+    const basement = this.addGroupFromTiled(map, offset, 'Basement', 'basement', 'Basement', true)
 
-    return { chairs, computers, whiteboards, vendingMachines }
+    return {
+      chairs,
+      computers,
+      whiteboards,
+      vendingMachines,
+      collidables: [objectsOnCollide, genericObjectsOnCollide, basement],
+    }
   }
 
   private addDoors() {
@@ -338,6 +385,49 @@ export default class Game extends Phaser.Scene {
       // static group's classType constructor only gets (scene, x, y, texture, frame) —
       // finish wiring the portal-specific fields it needs to activate correctly
       portal.setPortalData(config.id, config.targetX, config.targetY, config.label)
+    })
+  }
+
+  /**
+   * Roaming decorative NPCs (OB, Satpam, Receptionist) — main office only,
+   * client-side only (see NPC.ts). Collides against the exact same solid
+   * geometry the player does (walls, vending machines, doors, collidable
+   * Tiled furniture) so they can't walk through objects while wandering.
+   */
+  private addNPCs(
+    groundLayer: Phaser.Tilemaps.TilemapLayer,
+    mainObjects: MapObjectGroups,
+    doors: Door[]
+  ): Phaser.Physics.Arcade.Group {
+    const npcGroup = this.physics.add.group({ classType: NPC })
+    npcConfigs.forEach((config) => {
+      const npc = npcGroup.get(config.spawn.x, config.spawn.y, config.texture) as NPC
+      npc.setNpcData(config)
+      this.npcs.push(npc)
+    })
+    this.physics.add.collider(npcGroup, groundLayer)
+    this.physics.add.collider(npcGroup, mainObjects.vendingMachines)
+    mainObjects.collidables.forEach((group) => this.physics.add.collider(npcGroup, group))
+    doors.forEach((door) => this.physics.add.collider(npcGroup, door))
+    return npcGroup
+  }
+
+  private updateNPCs(time: number) {
+    this.npcs.forEach((npc) => npc.update(time, this.myPlayer.x, this.myPlayer.y))
+
+    // topicKeys is only set once registerKeys() runs (called from
+    // LoginDialog on submit) — the game scene's update loop is already
+    // ticking before that (myPlayer/npcs exist from create()), so this
+    // must stay guarded or every frame before login crashes here
+    if (!this.topicKeys) return
+
+    // number keys pick a conversation topic from whichever NPC's menu is
+    // currently open (see NPC.ts's openMenu/chooseTopic) — harmless no-op
+    // for every NPC whose menu isn't open
+    this.topicKeys.forEach((key, index) => {
+      if (Phaser.Input.Keyboard.JustDown(key)) {
+        this.npcs.forEach((npc) => npc.chooseTopic(index, this.myPlayer))
+      }
     })
   }
 
@@ -480,7 +570,7 @@ export default class Game extends Phaser.Scene {
     key: string,
     tilesetName: string,
     collidable: boolean
-  ) {
+  ): Phaser.Physics.Arcade.StaticGroup {
     const group = this.physics.add.staticGroup()
     const objectLayer = map.getObjectLayer(objectLayerName)!
     objectLayer.objects.forEach((object) => {
@@ -492,6 +582,7 @@ export default class Game extends Phaser.Scene {
     })
     if (this.myPlayer && collidable)
       this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], group)
+    return group
   }
 
   // function to add new player to the otherPlayer group
@@ -560,6 +651,7 @@ export default class Game extends Phaser.Scene {
       this.myPlayer.update(this.playerSelector, this.cursors, this.keyE, this.keyR, this.network)
       this.updateDoors()
       this.updateMediaZone(t)
+      this.updateNPCs(t)
     }
   }
 }

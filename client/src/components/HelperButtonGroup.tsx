@@ -209,7 +209,7 @@ export default function HelperButtonGroup() {
         <Tooltip title="Visit Our GitHub">
           <StyledFab
             size="small"
-            href="https://github.com/sepatusendal/meta-sora"
+            href="https://github.com/sepatusendal/sora"
             target="_blank"
           >
             <GitHubIcon />
